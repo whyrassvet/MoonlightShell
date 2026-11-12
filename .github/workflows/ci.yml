@@ -17,5 +17,9 @@ jobs:
           for f in bin/*; do
             if head -n1 "$f" | grep -q python; then python3 -m py_compile "$f"; fi
           done
+      - name: Installer tests
+        run: python3 -m unittest discover -s tests -v
       - name: Installer dry run
-        run: SHADOWS_ALLOW_ROOT=1 ./install.sh --yes --dry-run
+        run: |
+          printf 'ID=arch\nNAME="Test Arch"\n' > "$RUNNER_TEMP/arch-os-release"
+          OS_RELEASE="$RUNNER_TEMP/arch-os-release" SHADOWS_ALLOW_ROOT=1 ./install.sh --yes --dry-run
