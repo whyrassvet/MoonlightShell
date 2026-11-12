@@ -40,7 +40,7 @@ PanelWindow {
     function pick(f) { return Pipewire.nodes.values.filter(f) }
     readonly property var sinks: pick(function(n) { return n.audio && n.isSink && !n.isStream })
     readonly property var sources: pick(function(n) { return n.audio && !n.isSink && !n.isStream && (n.name || "").indexOf(".monitor") < 0 })
-    readonly property var apps: pick(function(n) { return n.audio && n.isStream && !n.isSink })
+    readonly property var apps: pick(function(n) { return n.audio && n.isStream && n.isSink })
     PwObjectTracker { objects: [vm.sink, vm.source].concat(vm.sinks, vm.sources, vm.apps) }
     function label(n) {
         if (!n) return ""
@@ -144,7 +144,7 @@ PanelWindow {
     Rectangle {
         id: card
         width: 380
-        height: Math.min(col.implicitHeight + 28, vm.height - (vm.side ? 24 : vm.barSpace + 20))
+        height: Math.min(Math.max(col.implicitHeight, col.childrenRect.height) + 28, vm.height - (vm.side ? 24 : vm.barSpace + 20))
         x: vm.side ? (vm.atRight ? vm.width - vm.sideSpace - width : vm.sideSpace)
                      : Math.max(12, Math.min(vm.width - width - 12, vm.cx - width / 2))
         y: vm.side ? Math.max(12, Math.min(vm.height - height - 12, (vm.cy < 0 ? vm.height / 2 : vm.cy) - 30))
@@ -165,13 +165,23 @@ PanelWindow {
         MouseArea { anchors.fill: parent; onWheel: function(e) { } }
 
         Flickable {
+            id: scroll
             anchors.fill: parent; anchors.margins: 14
-            contentHeight: col.implicitHeight
+            contentHeight: Math.max(col.implicitHeight, col.childrenRect.height)
             clip: true
+            interactive: false
             boundsBehavior: Flickable.StopAtBounds
+            WheelHandler {
+                target: null
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: function(event) {
+                    const delta = event.pixelDelta.y !== 0 ? event.pixelDelta.y : event.angleDelta.y / 120 * 48
+                    scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height, scroll.contentY - delta))
+                }
+            }
             Column {
                 id: col
-                width: parent.width
+                width: scroll.width
                 spacing: 4
 
                 Item {
