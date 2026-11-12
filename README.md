@@ -70,6 +70,7 @@ Use the Settings app to personalize the bar, wallpaper, colors, animations and d
 | Shortcut | Action |
 | --- | --- |
 | `SUPER + U` | Open Settings |
+| `SUPER + D` | Open the application launcher |
 | `SUPER + ALT + W` | Toggle desktop edit mode |
 | `SUPER + W` | Open wallpapers |
 | `SUPER + N` | Open the control center |

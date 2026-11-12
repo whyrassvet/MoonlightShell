@@ -14,8 +14,8 @@ local function exec(cmd) return function() return hl.dsp.exec_cmd(cmd) end end
 -- id -> default keys, what it does (a function that gives the dispatcher, so nothing is made before it is needed)
 RK.actions = {
     terminal  = { "SUPER + Return",    exec(BIN .. "rice-term") },
-    launcher  = { "SUPER + R",         exec(BIN .. "rice-launch") },
-    launcher2 = { "SUPER + D",        exec(BIN .. "rice-launch") },
+    launcher  = { "SUPER + D",         exec(BIN .. "rice-launch") },
+    launcher2 = { "ALT + Space",       exec(BIN .. "rice-launch") },
     settings  = { "SUPER + U",         exec(BIN .. "rice-settings") },
     wallpaper = { "SUPER + W",         exec(BIN .. "rice-dashboard wallpaper") },
     quick     = { "SUPER + A",         exec(BIN .. "rice-dashboard open control") },
@@ -46,6 +46,11 @@ local function read()
         if id and RK.actions[id] and keys ~= "" then out[id] = keys end
     end
     f:close()
+    -- Older versions used SUPER + D for launcher2. Do not bind the same key twice
+    -- when it now belongs to the primary launcher by default.
+    if out.launcher2 and out.launcher2 == (out.launcher or RK.actions.launcher[1]) then
+        out.launcher2 = nil
+    end
     return out
 end
 

@@ -17,7 +17,7 @@ import sys
 CONF = os.path.expanduser("~/.config/rice/keys.conf")
 # the same defaults as rice-keymap.lua
 DEFAULTS = {
-    "terminal": "SUPER + Return", "launcher": "SUPER + R", "launcher2": "SUPER + D", "settings": "SUPER + U",
+    "terminal": "SUPER + Return", "launcher": "SUPER + D", "launcher2": "ALT + Space", "settings": "SUPER + U",
     "wallpaper": "SUPER + W", "quick": "SUPER + A", "cc": "SUPER + N", "gamebar": "SUPER + G",
     "dashboard": "SUPER + ALT + D", "lock": "SUPER + L", "close": "SUPER + Q", "float": "SUPER + SHIFT + V", "clipboard": "SUPER + V",
     "shot": "Print", "shotfull": "SHIFT + Print", "record": "SUPER + SHIFT + R", "widgets": "SUPER + ALT + W",
@@ -43,12 +43,16 @@ KEY_RX = re.compile(r"^((SUPER|CTRL|ALT|SHIFT) \+ ){0,4}[A-Za-z0-9_]{1,24}$")
 def read():
     out = {}
     try:
-        for line in open(CONF):
-            m = re.match(r"^\s*([\w]+)\s*=\s*(.*?)\s*$", line)
-            if m and m.group(1) in DEFAULTS and m.group(2):
-                out[m.group(1)] = m.group(2)
+        with open(CONF) as config:
+            for line in config:
+                m = re.match(r"^\s*([\w]+)\s*=\s*(.*?)\s*$", line)
+                if m and m.group(1) in DEFAULTS and m.group(2):
+                    out[m.group(1)] = m.group(2)
     except OSError:
         pass
+    # An older default stored SUPER + D as launcher2; the primary launcher now uses it.
+    if out.get("launcher2") == out.get("launcher", defaults()["launcher"]):
+        out.pop("launcher2", None)
     return out
 
 

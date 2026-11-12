@@ -54,6 +54,16 @@ class InstallerTests(unittest.TestCase):
         self.assertGreater(module["key"]("1.10"), module["key"]("1.9"))
         self.assertEqual(module["clean"]("invalid"), "")
 
+    def test_launcher_default_and_legacy_duplicate(self):
+        config = self.home / ".config/rice/keys.conf"
+        config.parent.mkdir(parents=True)
+        config.write_text("launcher2=SUPER + D\n")
+        module = runpy.run_path(str(ROOT / "bin/rice-keymap"))
+        module["read"].__globals__["CONF"] = str(config)
+        self.assertEqual(module["DEFAULTS"]["launcher"], "SUPER + D")
+        self.assertEqual(module["DEFAULTS"]["launcher2"], "ALT + Space")
+        self.assertNotIn("launcher2", module["read"]())
+
     def test_non_arch_is_rejected(self):
         self.os_release.write_text('ID=fedora\nNAME=Fedora\n')
         result = self.install("--dry-run", "--yes")

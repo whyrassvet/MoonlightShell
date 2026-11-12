@@ -44,7 +44,7 @@ hl.monitor({
 -- Set programs that you use
 local terminal    = "$HOME/.local/bin/rice-term"   -- your terminal (Settings > Desktop > Look & Feel)
 local fileManager = "dolphin"
-local menu        = "$HOME/.local/bin/rice-launch"   -- the launcher (SUPER + R, SUPER + D)
+local menu        = "$HOME/.local/bin/rice-launch"   -- the launcher (SUPER + D, ALT + Space)
 
 
 -------------------
@@ -275,7 +275,7 @@ local closeWindowBind = hl.bind(mainMod .. " + C", hl.dsp.window.close())
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + SHIFT + V", hl.dsp.window.float({ action = "toggle" }))   -- SUPER + V: the clipboard
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(menu))
+hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
 
@@ -308,7 +308,7 @@ hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 -- Laptop multimedia keys for volume and LCD brightness
 hl.bind("ALT + bracketright", hl.dsp.exec_cmd("$HOME/.local/bin/rice-volume up"))
 hl.bind("ALT + bracketleft", hl.dsp.exec_cmd("$HOME/.local/bin/rice-volume down"))
-hl.bind("SUPER + D", hl.dsp.exec_cmd("$HOME/.local/bin/rice-launch"))
+hl.bind("ALT + Space", hl.dsp.exec_cmd("$HOME/.local/bin/rice-launch"))
 -- Requires playerctl
 hl.bind("XF86AudioNext",  hl.dsp.exec_cmd("playerctl next"),       { locked = true })
 hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
