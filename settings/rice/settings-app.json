@@ -1,0 +1,11 @@
+{
+  "motion": "expressive",
+  "bounce": 1.2,
+  "motionSpeed": 1,
+  "previews": false,
+  "scroll": 3,
+  "progressThick": 4,
+  "accentShape": "cookie12",
+  "wavy": true,
+  "cornerScale": 1.35
+}

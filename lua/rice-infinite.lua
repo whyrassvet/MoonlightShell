@@ -1,5 +1,5 @@
 -- Infinite Desktop is based on the idea of Sarods2D: https://github.com/sarodscommits/hyprland-infinitie-desktop-v2 (MIT)
--- DarkShadow's Shell: Infinite Desktop (Settings > Desktop > Infinite Desktop, or SUPER + F)
+-- DarkShadow's Shell: Infinite Desktop (Settings > Desktop > Infinite Desktop, or SUPER + ALT + F)
 -- The windows of a workspace float on an endless canvas. While it is on:
 --   CTRL + mouse wheel          zoom out / in around the pointer (the windows get smaller and come together)
 --   SUPER + mouse wheel         move the canvas up / down      SUPER + SHIFT + wheel: left / right
@@ -43,7 +43,7 @@ local bind_keys, unbind_keys
 
 -- your keys (Settings > Desktop > Infinite Desktop > Keys): on / off, the keys you hold (with the mouse or the
 -- arrows), the ones for going to the next window, and the one for zooming with the wheel
-RI.keys = { key_toggle = "SUPER + F", mod_hold = "SUPER + ALT", mod_go = "SUPER + CTRL", mod_zoom = "CTRL" }
+RI.keys = { key_toggle = "SUPER + ALT + F", mod_hold = "SUPER + ALT", mod_go = "SUPER + CTRL", mod_zoom = "CTRL" }
 
 function RI.load_cfg()
     local f = io.open(CONF, "r")
@@ -380,7 +380,7 @@ unbind_keys = function()
     pcall(hl.bind, "SUPER + mouse_up", hl.dsp.focus({ workspace = "e-1" }))
 end
 
--- the on / off key (yours, SUPER + F by default)
+-- the on / off key (SUPER + ALT + F by default)
 local toggle_key = nil
 local function bind_toggle()
     if toggle_key then pcall(hl.unbind, toggle_key) end

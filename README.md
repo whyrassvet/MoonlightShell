@@ -73,11 +73,14 @@ Use the Settings app to personalize the bar, wallpaper, colors, animations and d
 | `SUPER + ALT + W` | Toggle desktop edit mode |
 | `SUPER + W` | Open wallpapers |
 | `SUPER + N` | Open the control center |
+| `SUPER + F` | Toggle fullscreen |
+| `SUPER + T` | Return a window to tiling |
+| `SUPER + ALT + F` | Toggle Infinite Desktop |
 | `Print` | Capture the focused monitor |
 
 ### ⚙️ Your Hyprland configuration
 
-For your own Hyprland Lua settings and keybinds, edit `~/.config/hypr/user.lua`. It is loaded last by the shell's Hyprland configuration and is not overwritten by the installer during updates. Settings controlled by the app are kept separately.
+For your own Hyprland Lua settings and keybinds, edit `~/.config/hypr/hyprland-user.lua`. It is loaded last by the shell's Hyprland configuration and is not overwritten by the installer during updates. Existing `~/.config/hypr/user.lua` files are also loaded for compatibility. Settings controlled by the app are kept separately.
 
 ## 🔄 Updates
 

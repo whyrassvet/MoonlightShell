@@ -1,6 +1,13 @@
 -- keybinds that belong to DarkShadow's Shell (installed by install.sh, loaded from hyprland.lua)
 local bin = os.getenv("HOME") .. "/.local/bin/"
 
+hl.unbind("SUPER + F")
+hl.bind("SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
+hl.bind("SUPER + T", function()
+    hl.dispatch(hl.dsp.window.fullscreen({ action = "unset" }))
+    hl.dispatch(hl.dsp.window.float({ action = "unset" }))
+end)
+
 -- wallpaper picker: unbind first so only ONE menu opens even if another config also binds SUPER + W
 hl.unbind("SUPER + W")
 -- the Wallpaper tab of the dashboard (or the old picker when the dashboard is off)

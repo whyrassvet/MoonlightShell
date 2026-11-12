@@ -114,7 +114,7 @@ hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("$HOME/.local/bin/rice-volume mi
 
 if os.path.isdir(hypr):
     for f in sorted(os.listdir(hypr)):
-        if f.endswith(".lua"):
+        if f.endswith(".lua") and f not in ("user.lua", "hyprland-user.lua"):
             clamp_lua(os.path.join(hypr, f))
     fix_requires(os.path.join(hypr, "hyprland.lua"))
     migrate_main(os.path.join(hypr, "hyprland.lua"))

@@ -9,7 +9,7 @@ Item {
     id: page
     property var ctl
     readonly property bool niri: !!Quickshell.env("NIRI_SOCKET")
-    property var st: ({ keys: { key_toggle: "SUPER + F", mod_hold: "SUPER + ALT", mod_go: "SUPER + CTRL", mod_zoom: "CTRL" }, on: false, zoom: 1, step: 0.12, min: 0.2, pan: 180, speed: 1.0, dir: 1, push: 1, input: true, daemon: true, devices: null, loaded: true })
+    property var st: ({ keys: { key_toggle: "SUPER + ALT + F", mod_hold: "SUPER + ALT", mod_go: "SUPER + CTRL", mod_zoom: "CTRL" }, on: false, zoom: 1, step: 0.12, min: 0.2, pan: 180, speed: 1.0, dir: 1, push: 1, input: true, daemon: true, devices: null, loaded: true })
 
     function sh(args) { runner.command = ["bash", "-c", "\"$HOME/.local/bin/rice-infinite\" \"$@\" 2>&1", "_"].concat(args); runner.running = true }
     function fmt(n) { return String(Math.round(n * 100) / 100) }
@@ -188,7 +188,7 @@ Item {
             Column {
                 id: keys
                 width: parent.width
-                Key { keys: page.nice(page.kv("key_toggle", "SUPER + F")); what: I18n.t("Infinite Desktop on / off") }
+                Key { keys: page.nice(page.kv("key_toggle", "SUPER + ALT + F")); what: I18n.t("Infinite Desktop on / off") }
                 Key { keys: page.nice(page.kv("mod_hold", "SUPER + ALT")); what: I18n.t("Hold and move the mouse: the whole canvas moves with it") }
                 Key { keys: page.nice(page.kv("mod_hold", "SUPER + ALT")) + " + Arrows"; what: I18n.t("Move the canvas") }
                 Key { keys: page.nice(page.kv("mod_go", "SUPER + CTRL")) + " + Arrows"; what: I18n.t("Go to the next window that way (the canvas glides to it)") }

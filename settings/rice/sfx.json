@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "volume": 5,
+  "pack": "tap",
+  "click": true,
+  "switch": true,
+  "slider": true,
+  "typing": true,
+  "music": true
+}

@@ -15,7 +15,7 @@ local function exec(cmd) return function() return hl.dsp.exec_cmd(cmd) end end
 RK.actions = {
     terminal  = { "SUPER + Return",    exec(BIN .. "rice-term") },
     launcher  = { "SUPER + R",         exec(BIN .. "rice-launch") },
-    launcher2 = { "ALT + Space",       exec(BIN .. "rice-launch") },
+    launcher2 = { "SUPER + D",        exec(BIN .. "rice-launch") },
     settings  = { "SUPER + U",         exec(BIN .. "rice-settings") },
     wallpaper = { "SUPER + W",         exec(BIN .. "rice-dashboard wallpaper") },
     quick     = { "SUPER + A",         exec(BIN .. "rice-dashboard open control") },
@@ -32,7 +32,7 @@ RK.actions = {
     widgets   = { "SUPER + ALT + W",   exec(BIN .. "desktop-set edit toggle") },
     taskview  = { "SUPER + TAB",       exec(BIN .. "rice-taskview overview") },
     switcher  = { "ALT + TAB",         exec(BIN .. "rice-taskview switch") },
-    infinite  = { "SUPER + F",         function() return function() if RiceInfinite then RiceInfinite.toggle() end end end },
+    infinite  = { "SUPER + ALT + F",   function() return function() if RiceInfinite then RiceInfinite.toggle() end end end },
 }
 
 RK.cur = RK.cur or {}   -- id -> the keys it has now (when not the default)

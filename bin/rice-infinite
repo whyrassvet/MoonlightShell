@@ -68,7 +68,7 @@ case "$1" in
   state)
     on=$(val on "$st"); z=$(val z "$st")
     if niri; then grep -qs '"on": *true' "$c/infinite-niri.json" && on=1 || on=0; z=1; fi
-    if niri; then dt="SUPER + ALT + F"; dg="SUPER + ALT + SHIFT"; else dt="SUPER + F"; dg="SUPER + CTRL"; fi
+    if niri; then dt="SUPER + ALT + F"; dg="SUPER + ALT + SHIFT"; else dt="SUPER + ALT + F"; dg="SUPER + CTRL"; fi
     kt=$(val key_toggle "$conf"); kh=$(val mod_hold "$conf"); kg=$(val mod_go "$conf"); kz=$(val mod_zoom "$conf")
     keys=$(printf '"keys":{"key_toggle":"%s","mod_hold":"%s","mod_go":"%s","mod_zoom":"%s"},"niri":%s,' \
       "${kt:-$dt}" "${kh:-SUPER + ALT}" "${kg:-$dg}" "${kz:-CTRL}" "$(niri && echo true || echo false)")

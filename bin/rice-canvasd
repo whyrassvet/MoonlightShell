@@ -42,7 +42,7 @@ BTN_LEFT = 272
 
 NIRI = bool(os.environ.get("NIRI_SOCKET"))
 # your keys (infinite.conf): the keys you hold for the canvas, and the ones that go from window to window
-KEY_DEFAULTS = {"key_toggle": "SUPER + ALT + F" if NIRI else "SUPER + F", "mod_hold": "SUPER + ALT",
+KEY_DEFAULTS = {"key_toggle": "SUPER + ALT + F", "mod_hold": "SUPER + ALT",
                 "mod_go": "SUPER + ALT + SHIFT" if NIRI else "SUPER + CTRL", "mod_zoom": "CTRL"}
 MODKEYS = {"SUPER": META, "ALT": ALT, "CTRL": CTRL, "SHIFT": (42, 54)}
 

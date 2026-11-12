@@ -17,14 +17,15 @@ import sys
 CONF = os.path.expanduser("~/.config/rice/keys.conf")
 # the same defaults as rice-keymap.lua
 DEFAULTS = {
-    "terminal": "SUPER + Return", "launcher": "SUPER + R", "launcher2": "ALT + Space", "settings": "SUPER + U",
+    "terminal": "SUPER + Return", "launcher": "SUPER + R", "launcher2": "SUPER + D", "settings": "SUPER + U",
     "wallpaper": "SUPER + W", "quick": "SUPER + A", "cc": "SUPER + N", "gamebar": "SUPER + G",
     "dashboard": "SUPER + ALT + D", "lock": "SUPER + L", "close": "SUPER + Q", "float": "SUPER + SHIFT + V", "clipboard": "SUPER + V",
     "shot": "Print", "shotfull": "SHIFT + Print", "record": "SUPER + SHIFT + R", "widgets": "SUPER + ALT + W",
-    "infinite": "SUPER + F", "taskview": "SUPER + TAB", "switcher": "ALT + TAB",
+    "infinite": "SUPER + ALT + F", "taskview": "SUPER + TAB", "switcher": "ALT + TAB",
 }
 # niri: the same actions, its keys (the launcher is SUPER + D there; Infinite Desktop is Hyprland only)
 NIRI_DEFAULTS = dict(DEFAULTS, launcher="SUPER + D")
+NIRI_DEFAULTS["launcher2"] = "ALT + Space"
 NIRI_DEFAULTS.pop("infinite")
 # (the Task view and the switcher are the shell's on niri too: SUPER + Tab, ALT + Tab)
 MODS = [(64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")]

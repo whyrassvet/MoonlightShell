@@ -549,14 +549,14 @@ step_fonts() {
   else warn "JetBrains Mono Nerd Font is missing: icons will show as boxes"; fi
 }
 
-# ~/.config/hypr/user.lua: your own Hyprland settings, loaded last; no update ever writes over it
+# User overrides are created only if missing; existing files are never replaced.
 make_user_lua() {
   local f="$HOME/.config/hypr/user.lua"
   [ "$DRY_RUN" = 1 ] || [ -e "$f" ] && return 0
   mkdir -p "$HOME/.config/hypr"
   cat >"$f" <<'LUA'
 -- Your own Hyprland settings. DarkShadow's Shell never changes this file (updates leave it alone).
--- It is loaded last, so whatever you set here wins over the shell's config. Put your changes here instead of
+-- It is loaded after the shell's config and before hyprland-user.lua. Put your changes here instead of
 -- hyprland.lua (an update brings a new hyprland.lua; your old one is in ~/.config/darkshadows-shell-backup-*).
 -- Docs: https://wiki.hypr.land
 --
@@ -565,6 +565,16 @@ make_user_lua() {
 -- hl.config({ input = { repeat_delay = 300, repeat_rate = 40 } })
 -- hl.config({ general = { gaps_in = 4, gaps_out = 8 } })
 -- hl.on("hyprland.start", function() hl.exec_cmd("discord") end)
+LUA
+}
+
+make_hyprland_user_lua() {
+  local f="$HOME/.config/hypr/hyprland-user.lua"
+  [ "$DRY_RUN" = 1 ] || [ -e "$f" ] && return 0
+  mkdir -p "$HOME/.config/hypr"
+  cat >"$f" <<'LUA'
+-- Your personal Hyprland settings and keybinds. This file is loaded last and is not overwritten by updates.
+-- Example: hl.bind("SUPER + B", hl.dsp.exec_cmd("firefox"))
 LUA
 }
 
@@ -596,6 +606,7 @@ step_configs() {
   # your Settings for Hyprland (layout, gaps, keys ...) are written again over the file the update brought
   has_hypr && task "Your Hyprland settings" python3 "$ROOT/bin/hypr-set" regen
   has_hypr && make_user_lua
+  has_hypr && make_hyprland_user_lua
   task "btop: transparent theme" set_btop
   task "Hyprland add-ons (keybinds, gaming mode)" copy_lua
   [ -d "$ROOT/wallpapers" ] && task "Wallpapers  ->  ~/Pictures/Wallpapers" put_wallpapers
@@ -791,7 +802,7 @@ wire_hypr() {
     printf '%s\n%s\n\n' "-- DarkShadow's Shell: settings this Hyprland does not know are skipped instead of stopping the config" 'pcall(require, "rice-guard")' | cat - "$lua" >"$lua.rice-new" && mv -f "$lua.rice-new" "$lua"
   fi
   if [ -f "$HOME/.config/hypr/rice-gpu.lua" ] && ! grep -q 'rice-gpu' "$lua"; then printf '\npcall(require, "rice-gpu")\n' >>"$lua"; fi
-  # Settings > Desktop > Infinite Desktop (SUPER + F)
+  # Settings > Desktop > Infinite Desktop (SUPER + ALT + F)
   if [ -f "$HOME/.config/hypr/rice-infinite.lua" ] && ! grep -q 'rice-infinite' "$lua"; then printf '\npcall(require, "rice-infinite")\n' >>"$lua"; fi
   # your own keys for the shell's actions (Settings > System > Keybinds): loaded after everything else
   if [ -f "$HOME/.config/hypr/rice-keymap.lua" ] && ! grep -q 'rice-keymap' "$lua"; then printf '\npcall(require, "rice-keymap")\n' >>"$lua"; fi
@@ -800,6 +811,16 @@ wire_hypr() {
       printf '\nrequire("%s")\n' "$m" >>"$lua"
     fi
   done
+  # User overrides must remain last even when hardware modules were added above.
+  if [ -f "$HOME/.config/hypr/hyprland-user.lua" ]; then
+    python3 - "$lua" <<'PY'
+import pathlib, re, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+text = re.sub(r'^\s*require\("hyprland-user"\)\s*$', '', text, flags=re.M)
+path.write_text(text.rstrip() + '\n\nrequire("hyprland-user")\n')
+PY
+  fi
   return 0
 }
 patch_colors() {

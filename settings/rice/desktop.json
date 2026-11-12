@@ -2,56 +2,102 @@
   "widgets": {
     "weather": {
       "enabled": false,
-      "x": 725,
-      "y": 274,
       "scale": 1.0
     },
     "media": {
-      "enabled": false,
-      "x": 920,
-      "y": 404,
+      "enabled": true,
       "scale": 1.0
     },
     "resources": {
       "enabled": false,
-      "x": 55,
-      "y": 598,
-      "scale": 1.0
+      "scale": 0.995,
+      "bg": 1.0,
+      "opacity": 1.0
     },
     "usercard": {
-      "enabled": false,
-      "x": 1538,
-      "y": 81
+      "enabled": true,
+      "scale": 1.0
     },
     "calendar": {
-      "enabled": false,
-      "x": 1488,
-      "y": 607
+      "enabled": false
     },
     "visualizer": {
-      "enabled": false,
-      "x": 0,
-      "y": 1040,
-      "w": 1920,
-      "h": 40,
+      "enabled": true,
       "style": "bars",
-      "flip": false
+      "flip": false,
+      "color": "accent",
+      "bars": "64",
+      "gain": "1.4",
+      "shape": "rounded",
+      "gap": "wide",
+      "h": 60
     },
     "battery": {
       "enabled": false,
-      "x": 779,
-      "y": 471,
       "scale": 0.937,
       "opacity": 1.0,
       "bg": 1.0
+    },
+    "todo": {
+      "enabled": false
+    },
+    "focus": {
+      "enabled": false
+    },
+    "notes": {
+      "enabled": false
+    },
+    "gauge": {
+      "enabled": false,
+      "scale": 0.902,
+      "metric": "cpu",
+      "style": "hexagon",
+      "opacity": 1.0,
+      "bg": 1.0
+    },
+    "date": {
+      "enabled": false
+    },
+    "sky": {
+      "enabled": false
+    },
+    "nowring": {
+      "enabled": false
+    },
+    "player": {
+      "enabled": false
+    },
+    "playpill": {
+      "enabled": false
+    },
+    "lyrics": {
+      "enabled": false,
+      "scale": 1.0
+    },
+    "storage": {
+      "enabled": false
+    },
+    "trio": {
+      "enabled": true,
+      "scale": 0.999
+    },
+    "forecast": {
+      "enabled": false
+    },
+    "music": {
+      "enabled": false
+    },
+    "datepill": {
+      "enabled": false
     }
   },
   "clock": {
-    "enabled": true,
+    "enabled": false,
     "onlyLocked": false,
     "placement": "draggable",
-    "style": "digital",
-    "font": "bebas"
+    "style": "pixel",
+    "font": "default",
+    "scale": 1.312
   },
   "dock": {
     "enabled": false,
@@ -80,5 +126,11 @@
   },
   "widgetBlur": true,
   "autoHide": true,
-  "editing": false
+  "editing": false,
+  "widgetTheme": "shadow",
+  "widgetAdapt": true,
+  "gamebar": {
+    "opacity": 0.9,
+    "blur": true
+  }
 }

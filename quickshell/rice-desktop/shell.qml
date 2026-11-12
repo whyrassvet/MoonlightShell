@@ -345,7 +345,7 @@ ShellRoot {
         WidgetWindow {
             id: batWin
             wid: "battery"; wc: root.wc("battery"); active: root.on("battery"); editing: root.editing; hidden: root.hideWidgets
-            bw: root.sw; bh: root.sh; cw: 280; ch: 110; defX: 40; defY: 520
+            bw: root.sw; bh: root.sh; cw: 280; ch: 110; defX: 40; defY: Math.max(20, Math.round(root.sh * 0.46))
             onMoved: function(id, x, y) { root.savePos(id, x, y) }
             Component.onCompleted: root.reg(wid, batWin)
             Component.onDestruction: root.unreg(wid)
@@ -498,7 +498,7 @@ ShellRoot {
         WidgetWindow {
             id: trioWin
             wid: "trio"; wc: root.wc("trio"); active: root.on("trio"); editing: root.editing; hidden: root.hideWidgets
-            bw: root.sw; bh: root.sh; cw: 330; ch: 104; defX: 660; defY: 530
+            bw: root.sw; bh: root.sh; cw: 330; ch: 104; defX: 40; defY: Math.max(140, Math.round(root.sh * 0.46) + 140)
             onMoved: function(id, x, y) { root.savePos(id, x, y) }
             Component.onCompleted: root.reg(wid, trioWin)
             Component.onDestruction: root.unreg(wid)
@@ -549,7 +549,7 @@ ShellRoot {
             wid: "visualizer"; wc: root.wc("visualizer"); active: root.on("visualizer"); editing: root.editing; hidden: root.hideWidgets
             free: true; passive: true
             bw: root.sw; bh: root.sh
-            defW: root.sw; defH: 180; defX: 0; defY: root.sh - 180
+            defW: root.sw; defH: 180; defX: 0; defY: Math.max(0, root.sh - (wc.h !== undefined ? wc.h : defH))
             Component.onCompleted: root.reg(wid, vizWin)
             Component.onDestruction: root.unreg(wid)
             VizWidget { anchors.fill: parent; running: root.on("visualizer") && !root.hideWidgets && !Look.lite; style: vizWin.sty !== "" ? vizWin.sty : "bars"; flip: vizWin.flp; pal: vizWin.pal; colorMode: vizWin.vcolor !== "" ? vizWin.vcolor : "accent"

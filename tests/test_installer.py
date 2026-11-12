@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import runpy
 import shutil
@@ -75,6 +76,55 @@ class InstallerTests(unittest.TestCase):
         result = self.install("--dry-run", "--yes", "--no-packages")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_user_hypr_modules_created_without_overwriting(self):
+        script = (ROOT / "install.sh").read_text()
+        functions = script[script.index("make_user_lua() {"):script.index("# btop:")]
+        command = functions + '\nDRY_RUN=0\nmake_user_lua\nmake_hyprland_user_lua\n'
+        subprocess.run(["bash", "-e", "-c", command], env=self.env, check=True)
+        hypr = self.home / ".config/hypr"
+        for name in ("user.lua", "hyprland-user.lua"):
+            (hypr / name).write_text("-- personal settings\n")
+        subprocess.run(["bash", "-e", "-c", command], env=self.env, check=True)
+        for name in ("user.lua", "hyprland-user.lua"):
+            self.assertEqual((hypr / name).read_text(), "-- personal settings\n")
+
+    def test_fixup_does_not_change_user_hypr_modules(self):
+        hypr = self.home / ".config/hypr"
+        hypr.mkdir(parents=True)
+        for name in ("user.lua", "hyprland-user.lua"):
+            (hypr / name).write_text("render_power = 42\n")
+        subprocess.run(["python3", str(ROOT / "install/lib/fixup.py")], env=self.env, check=True,
+                       capture_output=True, text=True)
+        for name in ("user.lua", "hyprland-user.lua"):
+            self.assertEqual((hypr / name).read_text(), "render_power = 42\n")
+
+    def test_shipped_hypr_defaults_do_not_pin_a_monitor(self):
+        for name in ("moonlight-defaults.lua", "rice-settings.lua"):
+            content = (ROOT / "config/hypr" / name).read_text()
+            self.assertNotIn("hl.monitor", content)
+            self.assertNotIn("sensitivity", content)
+
+    def test_default_widget_layout_is_not_tied_to_one_display(self):
+        desktop = json.loads((ROOT / "settings/rice/desktop.json").read_text())
+        for widget in desktop["widgets"].values():
+            self.assertFalse({"x", "y", "w"} & widget.keys())
+        self.assertTrue(desktop["widgets"]["visualizer"]["enabled"])
+
+    def test_user_module_stays_last_when_wiring_hyprland(self):
+        hypr = self.home / ".config/hypr"
+        hypr.mkdir(parents=True)
+        main = hypr / "hyprland.lua"
+        main.write_text('require("hyprland-user")\n')
+        (hypr / "hyprland-user.lua").write_text("-- personal settings\n")
+        (hypr / "rice-gpu.lua").write_text("-- hardware support\n")
+        script = (ROOT / "install.sh").read_text()
+        function = script[script.index("wire_hypr() {"):script.index("patch_colors() {")]
+        subprocess.run(["bash", "-e", "-c", function + "\nwire_hypr\nwire_hypr\n"], env=self.env, check=True)
+        lines = main.read_text().splitlines()
+        self.assertEqual(lines[-1], 'require("hyprland-user")')
+        self.assertEqual(lines.count('require("hyprland-user")'), 1)
+        self.assertIn('pcall(require, "rice-gpu")', lines)
 
     def test_wrong_remote_is_rejected(self):
         self.setup_git()

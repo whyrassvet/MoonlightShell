@@ -44,7 +44,7 @@ hl.monitor({
 -- Set programs that you use
 local terminal    = "$HOME/.local/bin/rice-term"   -- your terminal (Settings > Desktop > Look & Feel)
 local fileManager = "dolphin"
-local menu        = "$HOME/.local/bin/rice-launch"   -- the launcher (SUPER + R, ALT + Space)
+local menu        = "$HOME/.local/bin/rice-launch"   -- the launcher (SUPER + R, SUPER + D)
 
 
 -------------------
@@ -308,7 +308,7 @@ hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 -- Laptop multimedia keys for volume and LCD brightness
 hl.bind("ALT + bracketright", hl.dsp.exec_cmd("$HOME/.local/bin/rice-volume up"))
 hl.bind("ALT + bracketleft", hl.dsp.exec_cmd("$HOME/.local/bin/rice-volume down"))
-hl.bind("ALT + Space", hl.dsp.exec_cmd("$HOME/.local/bin/rice-launch"))
+hl.bind("SUPER + D", hl.dsp.exec_cmd("$HOME/.local/bin/rice-launch"))
 -- Requires playerctl
 hl.bind("XF86AudioNext",  hl.dsp.exec_cmd("playerctl next"),       { locked = true })
 hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
@@ -464,6 +464,7 @@ hl.layer_rule({
 })
 
 require("hyprland-gui")
+require("moonlight-defaults")
 require("rice-settings")
 require("rice-dock")
 require("rice-hotcorner")
@@ -481,13 +482,24 @@ hl.window_rule({
     size   = "800 500",
 })
 
+-- Keep Zoom's auxiliary windows unobtrusive without changing the main window.
+hl.window_rule({
+    match = { class = "^zoom$", title = "negative:^Zoom$" },
+    float = true,
+    no_initial_focus = true,
+    no_blur = true,
+    no_shadow = true,
+    no_anim = true,
+    decorate = false,
+})
+
 
 -- rice-tooltip-blur: blur for waybar tooltips (popups)
 pcall(hl.config, { decoration = { blur = { popups = true, popups_ignorealpha = 0.2 } } })
 
 require("rice-keys")
 
--- Infinite Desktop (SUPER + F)
+-- Infinite Desktop (SUPER + ALT + F)
 pcall(require, "rice-infinite")
 
 require("rice-dashboard")
@@ -498,5 +510,8 @@ require("rice-gaming")
 -- your own keys for the shell's actions (Settings > System > Keybinds)
 pcall(require, "rice-keymap")
 
--- yours: ~/.config/hypr/user.lua (updates never change it; it is loaded last, so it wins)
+-- Keep the previous user override file for existing installations.
 pcall(require, "user")
+
+-- Your personal settings are loaded last; the installer never replaces this file.
+require("hyprland-user")

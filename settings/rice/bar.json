@@ -1,0 +1,56 @@
+{
+  "enabled": true,
+  "style": "notch",
+  "position": "bottom",
+  "height": 38,
+  "workspaces": 5,
+  "seconds": false,
+  "opacity": 0.45,
+  "ws_style": "dots",
+  "logo": "moon",
+  "autohide": false,
+  "shadow": false,
+  "notch_symmetric": true,
+  "island_dynamic": true,
+  "island_hover": true,
+  "island_volume": true,
+  "island_ws": false,
+  "island_notifs": true,
+  "tray_size": 18,
+  "island_date": false,
+  "island_weather": false,
+  "island_charge": true,
+  "island_tab": "today",
+  "island_close": 4,
+  "logo_color": "white",
+  "title_icon": "right",
+  "music_added": true,
+  "layout": {
+    "left": [
+      "launcher",
+      "workspaces",
+      "tray"
+    ],
+    "center": [
+      "island"
+    ],
+    "right": [
+      "network",
+      "volume",
+      "battery",
+      "notifications",
+      "power"
+    ],
+    "available": [
+      "title",
+      "media",
+      "bluetooth",
+      "visualizer",
+      "weather",
+      "sysmon",
+      "date",
+      "music"
+    ]
+  },
+  "v": 2
+}
