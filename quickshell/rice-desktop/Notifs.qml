@@ -9,6 +9,7 @@ import QtQuick
 Scope {
     id: nfy
     property bool shellMode: false
+    property bool islandVolume: false
     property bool dnd: false
     readonly property var list: srvLoader.item ? srvLoader.item.trackedNotifications.values : []
     readonly property int count: list.length
@@ -83,6 +84,7 @@ Scope {
         ignoreUnknownSignals: true
         function onArrived(n) { nfy.arrive(n) }
     }
+    Binding { target: srvLoader.item; property: "islandVolume"; value: nfy.islandVolume; when: srvLoader.item !== null }
 
     function urgent(n) { return n.urgency === 2 }
     // every pop-up is {key, n}: pop-ups are found by their number, so closing one never depends on the

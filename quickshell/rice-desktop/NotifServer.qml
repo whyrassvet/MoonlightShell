@@ -7,6 +7,7 @@ import QtQuick
 NotificationServer {
     id: srv
     signal arrived(var n)
+    property bool islandVolume: false
     keepOnReload: true
     actionsSupported: true
     bodySupported: true
@@ -14,5 +15,11 @@ NotificationServer {
     bodyHyperlinksSupported: true
     imageSupported: true
     persistenceSupported: true
-    onNotification: function(n) { n.tracked = true; srv.arrived(n) }
+    onNotification: function(n) {
+        if (islandVolume && n.appName === "rice-media" && (n.summary === "Volume" || n.summary === "Muted")) {
+            n.dismiss()
+            return
+        }
+        n.tracked = true; srv.arrived(n)
+    }
 }

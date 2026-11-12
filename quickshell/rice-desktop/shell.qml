@@ -592,7 +592,7 @@ ShellRoot {
     LazyPanel { name: "volume-open"; VolumeMenu { } }
     VolumeOsd { islandTakes: mainBar.islandVolume }
     LazyPanel { name: "gamebar-open"; GamePanel { gb: root.cfg.gamebar ? root.cfg.gamebar : ({}) } }
-    Notifs { id: notifs; islandTakes: mainBar.islandNotifs && notifs.shellMode }
+    Notifs { id: notifs; islandTakes: mainBar.islandNotifs && notifs.shellMode; islandVolume: mainBar.islandVolume }
     // made only when opened, let go two minutes after it closed (less memory from the start)
     // Keep the control center ready so opening it never waits for component creation.
     ControlCenter { nf: notifs }
