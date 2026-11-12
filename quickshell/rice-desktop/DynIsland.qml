@@ -198,7 +198,8 @@ Item {
     // ---------- its size ----------
     readonly property real tw: {
         switch (mode) {
-        case "volume": case "mic": return 300
+        case "volume": return 300
+        case "mic": return Math.ceil(micLabel.implicitWidth + bh + 24)
         case "ws": return Math.max(190, wsRow.implicitWidth + 40)
         case "rec": return recRow.implicitWidth + 30
         case "charge": return 340
@@ -322,7 +323,7 @@ Item {
 
         // ---------- volume / microphone ----------
         Face {
-            name: isl.mode === "mic" ? "mic" : "volume"; width: 300; height: isl.bh
+            name: isl.mode === "mic" ? "mic" : "volume"; width: isl.tw; height: isl.bh
             Row {
                 anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 16
                 spacing: 10
@@ -338,7 +339,7 @@ Item {
                     color: isl.pal ? isl.pal.primary : "white"; track: isl.pal ? isl.pal.track : "#444"
                     onMoved: function(v) { if (isl.bar.sink && isl.bar.sink.audio) { isl.bar.sink.audio.muted = false; isl.bar.sink.audio.volume = v }; isl.show("volume", 1600) }
                 }
-                Text { visible: isl.mode === "mic"; width: parent.width - isl.bh - 48; anchors.verticalCenter: parent.verticalCenter
+                Text { id: micLabel; visible: isl.mode === "mic"; width: implicitWidth; anchors.verticalCenter: parent.verticalCenter
                     text: isl.micMuted ? Tr.t("Microphone off") : Tr.t("Microphone on"); color: isl.pal ? isl.pal.fg : "white"; font.family: Fonts.main; font.pixelSize: 13; font.weight: Font.Medium }
                 Text { width: 30; anchors.verticalCenter: parent.verticalCenter; horizontalAlignment: Text.AlignRight; visible: isl.mode !== "mic"
                     text: isl.muted ? "0" : Math.round(isl.vol * 100); color: isl.pal ? isl.pal.fg : "white"; font.family: Fonts.numbers; font.pixelSize: 13; font.weight: Font.Medium }

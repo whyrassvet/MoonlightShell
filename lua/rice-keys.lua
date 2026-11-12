@@ -10,7 +10,9 @@ hl.bind("SUPER + W", hl.dsp.exec_cmd(bin .. "rice-dashboard wallpaper"))
 hl.bind("XF86AudioRaiseVolume",  hl.dsp.exec_cmd(bin .. "rice-media up"),          { locked = true })
 hl.bind("XF86AudioLowerVolume",  hl.dsp.exec_cmd(bin .. "rice-media down"),        { locked = true })
 hl.bind("XF86AudioMute",         hl.dsp.exec_cmd(bin .. "rice-media mute"),        { locked = true })
-hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd(bin .. "rice-media mic"),         { locked = true })
+-- Avoid toggling twice when the main Hyprland config already binds the microphone key.
+hl.unbind("XF86AudioMicMute")
+hl.bind("XF86AudioMicMute",      hl.dsp.exec_cmd(bin .. "rice-volume mic"),        { locked = true })
 hl.bind("XF86MonBrightnessUp",   hl.dsp.exec_cmd(bin .. "rice-media bright-up"),   { locked = true })
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd(bin .. "rice-media bright-down"), { locked = true })
 
