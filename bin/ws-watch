@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# ws-watch: tells Waybar about workspace changes (Hyprland's events, or niri's event stream)
+exec 9>"$XDG_RUNTIME_DIR/ws-watch.lock"
+flock -n 9 || exit 0
+if [ -n "${NIRI_SOCKET:-}" ]; then
+  niri msg -j event-stream 2>/dev/null | while read -r line; do
+    case "$line" in *Workspace*) pkill -RTMIN+8 waybar ;; esac
+  done
+  exit 0
+fi
+sock="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
+socat -u "UNIX-CONNECT:$sock" - | while read -r line; do
+  case "$line" in
+    workspace*|focusedmon*|createworkspace*|destroyworkspace*) pkill -RTMIN+8 waybar ;;
+  esac
+done

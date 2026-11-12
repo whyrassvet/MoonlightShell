@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""rice-lyrics ARTIST TITLE [ALBUM] [SECONDS]
+Lyrics for the Lyrics widget, from LRCLIB (lrclib.net, free and open, no account). Prints JSON:
+{"synced": [[seconds, "line"], ...], "plain": "text", "found": true|false}
+Answers are kept in ~/.cache/rice/lyrics, so a song is asked for only once."""
+import hashlib
+import json
+import os
+import re
+import sys
+import urllib.parse
+import urllib.request
+
+CACHE = os.path.expanduser("~/.cache/rice/lyrics")
+UA = "DarkShadow's Shell lyrics widget (https://github.com/shadowww-dev/DarkShadowShell)"
+
+
+def get(url):
+    req = urllib.request.Request(url, headers={"User-Agent": UA})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            return json.load(r)
+    except Exception:
+        return None
+
+
+def parse(lrc):
+    out = []
+    for ln in (lrc or "").splitlines():
+        stamps = re.findall(r"\[(\d+):(\d+(?:\.\d+)?)\]", ln)
+        text = re.sub(r"\[[^\]]*\]", "", ln).strip()
+        for m, s in stamps:
+            out.append([round(int(m) * 60 + float(s), 2), text])
+    out.sort(key=lambda x: x[0])
+    return out
+
+
+def main(a):
+    if len(a) < 3:
+        sys.exit(__doc__)
+    artist, title = a[1].strip(), a[2].strip()
+    album = a[3].strip() if len(a) > 3 else ""
+    dur = a[4] if len(a) > 4 else ""
+    # "Song (Official Video)" and "Artist - Topic" from YouTube: the plain names find more
+    title = re.sub(r"\s*[\(\[][^\)\]]*(official|video|audio|lyrics?|hd|4k|visuali[sz]er)[^\)\]]*[\)\]]", "", title, flags=re.I).strip()
+    artist = re.sub(r"\s*-\s*Topic$", "", artist).strip()
+    key = hashlib.sha1(("%s|%s" % (artist.lower(), title.lower())).encode()).hexdigest()
+    os.makedirs(CACHE, exist_ok=True)
+    cf = os.path.join(CACHE, key + ".json")
+    if os.path.exists(cf):
+        print(open(cf).read())
+        return
+    base = "https://lrclib.net/api/"
+    q = {"artist_name": artist, "track_name": title}
+    if album:
+        q["album_name"] = album
+    try:
+        if dur and float(dur) > 0:
+            q["duration"] = str(int(float(dur)))
+    except ValueError:
+        pass
+    j = get(base + "get?" + urllib.parse.urlencode(q)) if artist else None
+    if not j or not (j.get("syncedLyrics") or j.get("plainLyrics")):
+        res = get(base + "search?" + urllib.parse.urlencode({"q": (artist + " " + title).strip()}))
+        j = None
+        if isinstance(res, list):
+            for r in res:
+                if r.get("syncedLyrics"):
+                    j = r
+                    break
+            if j is None and res:
+                j = res[0]
+    out = {"synced": parse(j.get("syncedLyrics")) if j else [], "plain": (j.get("plainLyrics") or "") if j else "",
+           "found": bool(j and (j.get("syncedLyrics") or j.get("plainLyrics")))}
+    s = json.dumps(out, ensure_ascii=False)
+    if j is not None or out["found"]:
+        open(cf, "w").write(s)
+    print(s)
+
+
+main(sys.argv)

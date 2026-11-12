@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""rice-sound: notification sounds. Settings > Notifications > Sound.
+
+  rice-sound list              sounds you can pick
+  rice-sound play [NAME]       play NAME (or the chosen one) now, e.g. to preview it
+  rice-sound notify            called by swaync for every new notification
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CFG = HOME + "/.config/rice/notify.json"
+DIRS = [HOME + "/.local/share/rice/sounds", "/run/current-system/sw/share/rice/sounds"]
+SOUNDS = ["glass", "droplet", "chime", "bubble", "marimba", "aurora", "ping", "harp", "keys", "ripple"]
+STAMP = HOME + "/.cache/rice/sound.last"
+# never ding for these: volume/brightness popups and the like
+QUIET_APPS = {"rice-media", "swayosd", "volume", "brightness", "brightnessctl"}
+
+
+def conf():
+    try:
+        c = json.load(open(CFG))
+    except Exception:
+        c = {}
+    name = c.get("sound", "glass")
+    vol = c.get("sound_volume", 70)
+    try:
+        vol = max(0, min(100, int(float(vol))))
+    except Exception:
+        vol = 70
+    return name, vol
+
+
+def path(name):
+    for d in DIRS:
+        p = "%s/%s.wav" % (d, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def play(name, vol):
+    p = path(name)
+    if not p or vol <= 0:
+        return
+    v = vol / 100.0
+    if shutil.which("pw-play"):
+        cmd = ["pw-play", "--media-role", "Notification", "--volume", "%.2f" % v, p]
+    elif shutil.which("paplay"):
+        cmd = ["paplay", "--volume", str(int(65536 * v)), p]
+    elif shutil.which("aplay"):
+        cmd = ["aplay", "-q", p]
+    elif shutil.which("ffplay"):
+        cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-volume", str(vol), p]
+    else:
+        return
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def dnd():
+    # the shell shows notifications itself (rice-cc engine shell): its own Do Not Disturb, and no swaync-client
+    # call (that would start swaync again through D-Bus)
+    try:
+        cc = json.load(open(HOME + "/.config/rice/cc.json"))
+        if cc.get("engine") == "shell":
+            return cc.get("dnd") is True
+    except Exception:
+        pass
+    if not shutil.which("swaync-client"):
+        return False
+    try:
+        r = subprocess.run(["swaync-client", "-D", "-sw"], capture_output=True, text=True, timeout=1.5)
+        return r.stdout.strip() == "true"
+    except Exception:
+        return False
+
+
+def let_go():
+    """close swaync's pipe before anything else (swaync 0.12 crashes if it stays open after we end)"""
+    try:
+        fd = os.open(os.devnull, os.O_RDWR)
+        for n in (0, 1, 2):
+            os.dup2(fd, n)
+        if fd > 2:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def notify():
+    let_go()
+    # return to swaync at once, decide in the background
+    if os.fork() > 0:
+        return
+    os.setsid()
+    name, vol = conf()
+    if name not in SOUNDS or vol <= 0:
+        return
+    app = os.environ.get("SWAYNC_APP_NAME", "").strip().lower()
+    if app in QUIET_APPS:
+        return
+    if os.environ.get("SWAYNC_REPLACES_ID", "0") not in ("", "0"):
+        return  # an update of a notification already shown (progress, volume, ...)
+    if dnd():
+        return
+    # one sound for a burst of notifications
+    now = time.time()
+    try:
+        if now - os.path.getmtime(STAMP) < 0.6:
+            return
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(STAMP), exist_ok=True)
+    open(STAMP, "w").close()
+    play(name, vol)
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else ""
+    if cmd == "list":
+        print(json.dumps([{"name": s, "available": path(s) is not None} for s in SOUNDS]))
+    elif cmd == "play":
+        name, vol = conf()
+        if len(a) > 2:
+            name = a[2]
+        if len(a) > 3:
+            vol = max(0, min(100, int(float(a[3]))))
+        play(name, vol)
+    elif cmd == "notify":
+        notify()
+    else:
+        sys.stderr.write(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

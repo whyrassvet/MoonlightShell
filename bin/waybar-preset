@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+dir="$HOME/.config/waybar-presets"
+live="$HOME/.config/waybar"
+files=(config.jsonc style.css)
+
+case "$1" in
+  apply)
+    name="$2"
+    [ -d "$dir/$name" ] || { echo "no such preset: $name" >&2; exit 1; }
+    tmp="$(mktemp -d)"
+    for f in "${files[@]}"; do [ -f "$live/$f" ] && cp -f "$live/$f" "$tmp/$f"; done
+    for f in "${files[@]}"; do [ -f "$dir/$name/$f" ] && cp -f "$dir/$name/$f" "$live/$f"; done
+    rm -rf "$dir/_last"
+    mv "$tmp" "$dir/_last"
+    "$HOME/.local/bin/waybar-set" reapply
+    "$HOME/.local/bin/waybar-reload"
+    ;;
+  save)
+    name="${2//[^A-Za-z0-9_-]/_}"
+    [ -n "$name" ] || exit 1
+    case "$name" in _*) name="p$name" ;; esac
+    mkdir -p "$dir/$name"
+    for f in "${files[@]}"; do [ -f "$live/$f" ] && cp -f "$live/$f" "$dir/$name/$f"; done
+    if [ -f "$dir/$name/style.css" ]; then
+      python3 -c 'import re,sys;p=sys.argv[1];s=open(p).read();open(p,"w").write(re.sub(r"\n?/\* rice-ui \*/.*?/\* end-rice-ui \*/\n?","\n",s,flags=re.S))' "$dir/$name/style.css"
+    fi
+    ;;
+  *)
+    echo "usage: waybar-preset apply|save NAME" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+while true; do
+  peaclock --config-dir "$HOME/.config/peaclock" "$@"
+  [ $? -eq 138 ] || break
+done

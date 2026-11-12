@@ -1,0 +1,126 @@
+{
+  "enabled": true,
+  "position": "bottom",
+  "hover": true,
+  "edge": true,
+  "wallpaper_key": true,
+  "style": "shadow",
+  "width": 1000,
+  "scale": 1.0,
+  "delay": 0,
+  "trigger": 200,
+  "close_on_leave": true,
+  "speed": 1.0,
+  "tabs": [
+    "dashboard",
+    "wallpaper",
+    "performance",
+    "about"
+  ],
+  "default_tab": "dashboard",
+  "blur": true,
+  "opacity": 0.42,
+  "animation": "slide",
+  "hotspot": "bar",
+  "attach": true,
+  "layouts": {
+    "about": [
+      {
+        "id": "system",
+        "w": 5,
+        "h": 1
+      },
+      {
+        "id": "distro",
+        "w": 3,
+        "h": 1
+      },
+      {
+        "id": "rice",
+        "w": 4,
+        "h": 1
+      }
+    ],
+    "dashboard": [
+      {
+        "id": "weather",
+        "w": 4,
+        "h": 1,
+        "x": 0,
+        "y": 0
+      },
+      {
+        "id": "profile",
+        "w": 5,
+        "h": 1,
+        "x": 4,
+        "y": 0
+      },
+      {
+        "id": "media",
+        "w": 3,
+        "h": 3,
+        "x": 9,
+        "y": 0
+      },
+      {
+        "id": "clock",
+        "w": 2,
+        "h": 2,
+        "x": 0,
+        "y": 1
+      },
+      {
+        "id": "calendar",
+        "w": 5,
+        "h": 2,
+        "x": 2,
+        "y": 1
+      },
+      {
+        "id": "rings",
+        "w": 2,
+        "h": 2,
+        "x": 7,
+        "y": 1
+      }
+    ],
+    "performance": [
+      {
+        "id": "cpu",
+        "w": 5,
+        "h": 1,
+        "x": 1,
+        "y": 0
+      },
+      {
+        "id": "gpu",
+        "w": 5,
+        "h": 1,
+        "x": 6,
+        "y": 0
+      },
+      {
+        "id": "storage",
+        "w": 4,
+        "h": 1,
+        "x": 1,
+        "y": 1
+      },
+      {
+        "id": "network",
+        "w": 4,
+        "h": 1,
+        "x": 5,
+        "y": 1
+      },
+      {
+        "id": "memory",
+        "w": 2,
+        "h": 1,
+        "x": 9,
+        "y": 1
+      }
+    ]
+  }
+}

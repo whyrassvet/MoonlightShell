@@ -1,0 +1,219 @@
+@import "colors.css";
+@import "ws-active.css";
+
+* {
+    font-family: "Jetbrains Mono", monospace;
+    font-weight: 800;
+    font-size: 13px;
+    color: #F6F5F4;
+}
+
+window#waybar {
+    background: rgba(13, 13, 13, 0.25);
+    border: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 0 6px;
+}
+
+#workspaces,
+#image.nix,
+#ws,
+#mpris,
+#wireplumber,
+#clock,
+#apps,
+#custom-notification,
+#custom-lock {
+    background: rgba(13, 13, 13, 0.95);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    margin: 0 4px;
+    padding: 4px 12px;
+}
+
+#workspaces {
+    padding: 4px 6px;
+}
+
+#apps {
+    padding: 4px 4px;
+}
+
+#network,
+#tray,
+#network,
+#tray,
+#bluetooth {
+    padding: 0 6px;
+}
+
+#bluetooth {
+    font-size: 17px;
+}
+
+#workspaces button {
+    padding: 0px 3px;
+    margin: 0 1px;
+    border-radius: 50%;
+    background: transparent;
+    color: #F6F5F4;
+}
+
+#workspaces button.active {
+    color: @on_accent;
+    background: @accent;
+}
+
+#workspaces button:hover {
+    background: #1a1a1a;
+    color: @accent;
+}
+
+#workspaces button.urgent {
+    background: #8C4A3A;
+    color: #F0D6A3;
+    border-radius: 4px;
+}
+
+#wireplumber.muted {
+    opacity: 0.55;
+}
+
+#custom-lock:hover {
+    color: #ff4d4d;
+}
+
+tooltip {
+    background: rgba(13, 13, 13, 0.95);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+}
+
+tooltip label {
+    color: #F6F5F4;
+    font-size: 11px;
+}
+
+#custom-notification {
+    font-size: 15px;
+    padding: 4px 12px;
+}
+
+#network {
+    font-size: 16px;
+    margin-left: 2px;
+}
+
+#ws {
+    padding: 4px 6px;
+}
+
+#image.nix {
+    font-size: 17px;
+    padding: 2px 7px;
+    margin-right: 8px;
+}
+
+#image.nix:hover {
+    color: @accent;
+}
+
+/* transparent-bar */
+#workspaces, #ws, #image.nix, #mpris, #wireplumber, #clock, #network, #apps, #bluetooth, #tray, #custom-notification, #custom-lock {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+
+/* nix-gap */
+#image.nix {
+    margin-right: 0px;
+    padding-right: 0px;
+}
+
+#ws {
+    margin-left: 6px;
+    padding-left: 0px;
+}
+
+/* right-pack */
+#wireplumber, #clock, #apps, #custom-notification, #custom-lock {
+    margin: 0 2px;
+    padding: 4px 7px;
+}
+
+#apps {
+    padding: 4px 3px;
+}
+
+#tray, #bluetooth, #network {
+    padding: 0 6px;
+}
+
+#custom-lock {
+    margin-right: 8px;
+}
+
+/* power-size */
+#custom-lock {
+    font-size: 18px;
+}
+
+/* bt-wifi-gap */
+#bluetooth, #network {
+    padding: 0 7px;
+}
+
+/* clock-gap */
+#clock {
+    margin-right: 0;
+    padding-right: 3px;
+}
+
+#apps {
+    margin-left: 0;
+}
+
+
+/* ws-glow */
+#custom-ws1, #custom-ws2, #custom-ws3, #custom-ws4 {
+    padding: 0 9px;
+    margin: 0 1px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: #F6F5F4;
+    font-weight: 800;
+}
+
+#custom-ws1.active, #custom-ws2.active, #custom-ws3.active, #custom-ws4.active {
+    color: @ws_active;
+    text-shadow: 0 0 8px @ws_active;
+}
+
+#custom-ws1:hover, #custom-ws2:hover, #custom-ws3:hover, #custom-ws4:hover {
+    color: @ws_active;
+}
+/* end-ws-glow */
+
+/* ws-clean */
+#custom-ws1, #custom-ws1.active, #custom-ws1:hover, #custom-ws1.active:hover, #custom-ws2, #custom-ws2.active, #custom-ws2:hover, #custom-ws2.active:hover, #custom-ws3, #custom-ws3.active, #custom-ws3:hover, #custom-ws3.active:hover, #custom-ws4, #custom-ws4.active, #custom-ws4:hover, #custom-ws4.active:hover {
+    background: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    min-width: 0;
+    min-height: 0;
+}
+/* end-ws-clean */
+
+/* mpris-gap */
+#mpris {
+    margin-left: 0;
+    padding-left: 1px;
+}
+/* end-mpris-gap */
+

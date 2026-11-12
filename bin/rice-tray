@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""rice-tray: the apps in the bar's tray (StatusNotifierItems).
+  rice-tray list        JSON: [{"id", "service", "pid", "name"}]
+  rice-tray quit ID     end the app behind the tray icon with that id (SIGTERM, then SIGKILL if it stays)"""
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+
+def bus(*args):
+    try:
+        r = subprocess.run(["busctl", "--user", "--json=short"] + list(args), capture_output=True, text=True, timeout=4)
+        return json.loads(r.stdout).get("data") if r.returncode == 0 and r.stdout.strip() else None
+    except Exception:
+        return None
+
+
+def items():
+    out = []
+    for watcher in ("org.kde.StatusNotifierWatcher", "org.freedesktop.StatusNotifierWatcher"):
+        reg = bus("get-property", watcher, "/StatusNotifierWatcher", watcher, "RegisteredStatusNotifierItems")
+        if not reg:
+            continue
+        for r in reg:
+            svc, path = (r.split("/", 1) + [""])[:2] if "/" in r else (r, "")
+            svc = svc.rstrip("@")
+            path = "/" + path if path else "/StatusNotifierItem"
+            pid = bus("call", "org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                      "GetConnectionUnixProcessID", "s", svc)
+            pid = pid[0] if isinstance(pid, list) and pid else None
+            iid = None
+            for iface in ("org.kde.StatusNotifierItem", "org.freedesktop.StatusNotifierItem"):
+                iid = bus("get-property", svc, path, iface, "Id")
+                if iid:
+                    break
+            name = ""
+            if pid:
+                try:
+                    name = open("/proc/%d/comm" % pid).read().strip()
+                except OSError:
+                    pass
+            out.append({"id": iid or "", "service": svc, "pid": pid, "name": name})
+        if out:
+            break
+    return out
+
+
+def quit(iid):
+    hit = [i for i in items() if i["pid"] and (i["id"] == iid or i["service"] == iid)]
+    if not hit:
+        sys.exit("rice-tray: no tray app with the id " + iid)
+    for i in hit:
+        pid = i["pid"]
+        if pid == os.getpid() or i["name"] in ("quickshell", "qs", ".quickshell-wra"):
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+        for _ in range(30):
+            time.sleep(0.1)
+            if not os.path.exists("/proc/%d" % pid):
+                break
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        print("closed " + (i["name"] or i["id"]))
+
+
+if __name__ == "__main__":
+    a = sys.argv
+    if len(a) > 1 and a[1] == "list":
+        print(json.dumps(items()))
+    elif len(a) > 2 and a[1] == "quit":
+        quit(a[2])
+    else:
+        sys.exit(__doc__)

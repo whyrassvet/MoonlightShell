@@ -1,0 +1,10 @@
+@define-color background                 #0d0d0d;
+@define-color background-sec             #1a1a1a;
+@define-color on_surface                 #F6F5F4;
+@define-color inverse_surface            #F6F5F4;
+@define-color outline                    #2a2a2a;
+@define-color color1                     #1a1a1a;
+@define-color error                      #ff4d4d;
+@define-color on_secondary               #3a3a3a;
+@define-color on_secondary_fixed         #141414;
+@define-color on_secondary_fixed_variant #2a2a2a;

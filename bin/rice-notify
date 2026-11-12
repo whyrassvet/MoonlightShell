@@ -1,0 +1,1082 @@
+#!/usr/bin/env python3
+"""rice-notify: notification popups and the notification center (swaync). Settings > Notifications.
+
+  rice-notify state | set KEY VALUE | apply | reset | restore | test | panel
+  rice-notify doctor     why a clicked notification is gone (checks the "keep clicked" parts)
+  rice-notify keep       swaync runs this when you click a notification
+"""
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+# swaync may run with a short PATH (started by D-Bus or systemd): its scripts go through rice-run.
+# "exec": swaync's own /bin/sh becomes rice-run, so its output pipe closes at once (swaync 0.12 crash)
+RUN = "exec /bin/sh " + HOME + "/.local/bin/rice-run"
+KEEP_LOG = HOME + "/.cache/rice/notify-keep.log"
+CFG = DIR + "/notify.json"
+FONTS = DIR + "/fonts.json"
+SW = HOME + "/.config/swaync"
+SWCFG = SW + "/config.json"
+SWCSS = SW + "/style.css"
+HYPR = HOME + "/.config/hypr"
+LUA = HYPR + "/rice-notify.lua"
+HLUA = HYPR + "/hyprland.lua"
+WAYBAR_COLORS = HOME + "/.config/waybar/colors.css"
+BEGIN, END = "/* rice-notify */", "/* end-rice-notify */"
+
+DEFAULTS = {
+    "pos_x": "right", "pos_y": "top", "margin": 10,
+    "layout": "deck", "panel_width": 440, "panel_height": 820, "fit": True,
+    "w_buttons": True, "w_media": True, "w_volume": True, "w_dnd": True, "w_title": True,
+    # the Deck notification center: side, floating or against the edge, and its rows
+    "cc_side": "right", "cc_float": True, "w_quick": True, "w_power": True, "w_brightness": True, "w_session": True,
+    "popup_width": 360, "timeout": 6, "critical_sticky": True, "icon_size": 40, "images": True,
+    "style": "glass", "popup_style": "match", "opacity": 0.80, "radius": 18, "blur": True, "compact": False, "accent": True,
+    "colors": "shell", "font": "sans", "font_size": 13, "popup_opacity": 0.85, "blur_popups": True,
+    "border": "none", "shadow": False,
+    "sound": "glass", "sound_volume": 70,
+    # clicking a notification keeps it in the notification center (swaync would remove it)
+    "keep_clicked": True,
+}
+INTS = {"margin": (0, 60), "panel_width": (300, 700), "panel_height": (300, 1400), "popup_width": (260, 600),
+        "timeout": (2, 30), "icon_size": (20, 72), "radius": (0, 32), "font_size": (10, 18),
+        "sound_volume": (0, 100)}
+FLOATS = {"opacity": (0.3, 1.0), "popup_opacity": (0.3, 1.0)}
+CHOICES = {"pos_x": ["left", "center", "right"], "pos_y": ["top", "bottom"],
+           "layout": ["deck", "controls-top", "controls-bottom", "minimal"], "style": ["glass", "solid", "google", "outline"],
+           "cc_side": ["left", "right", "top", "bottom"],
+           "popup_style": ["match", "glass", "solid", "minimal", "pill", "accent", "glow", "island", "light"],
+           "colors": ["shell", "black", "graphite", "slate", "white", "tinted"], "font": ["sans", "rounded", "mono", "system"],
+           "border": ["subtle", "accent", "none"],
+           "sound": ["glass", "droplet", "chime", "bubble", "marimba", "aurora", "ping", "harp", "keys", "ripple", "off"]}
+ORDER = {
+    # Deck: switches on top, notifications, media, volume and brightness, power buttons at the bottom
+    "deck": ["buttons-grid#quick", "title", "notifications", "mpris", "volume", "backlight",
+             "buttons-grid#session"],
+    "controls-top": ["buttons-grid", "mpris", "volume", "dnd", "title", "notifications"],
+    "controls-bottom": ["title", "dnd", "notifications", "mpris", "volume", "buttons-grid"],
+    "minimal": ["title", "dnd", "notifications"],
+}
+WKEY = {"buttons-grid": "w_buttons", "mpris": "w_media", "volume": "w_volume", "dnd": "w_dnd", "title": "w_title",
+        "buttons-grid#quick": "w_quick", "buttons-grid#power": "w_power", "backlight": "w_brightness",
+        "buttons-grid#session": "w_session"}
+SVC = HOME + "/.local/bin/rice-services"
+
+
+def die(m):
+    sys.stderr.write(m + "\n")
+    sys.exit(1)
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def load():
+    c = dict(DEFAULTS)
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        raw = {}
+    for k, d in DEFAULTS.items():
+        v = raw.get(k, d)
+        if isinstance(d, bool):
+            c[k] = v is True
+        elif k in CHOICES:
+            c[k] = v if v in CHOICES[k] else d
+        elif k in FLOATS:
+            try:
+                c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+            except Exception:
+                c[k] = d
+        else:
+            try:
+                c[k] = int(clamp(float(v), *INTS[k]))
+            except Exception:
+                c[k] = d
+    # V2.50: the new Deck notification center replaces the old layouts once
+    if raw.get("v", 1) < 2:
+        c["layout"] = "deck"
+        c["w_volume"] = True
+    # V2.51: the Deck needs the room: full screen height (a gap all around when floating), a bit wider
+    if raw.get("v", 1) < 3:
+        c["fit"] = True
+        c["panel_width"] = max(c["panel_width"], 440)
+    # V3.21: no outlines around notifications any more (Settings > Notifications > Border brings them back)
+    if raw.get("v", 1) < 4:
+        c["border"] = "none"
+    c["v"] = 4
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"))
+    os.replace(tmp, CFG)
+
+
+def accent():
+    try:
+        s = open(WAYBAR_COLORS).read()
+        a = re.search(r"@define-color\s+accent\s+#([0-9a-fA-F]{6})", s)
+        o = re.search(r"@define-color\s+on_accent\s+#([0-9a-fA-F]{6})", s)
+        return "#" + (a.group(1) if a else "d4d4d4"), "#" + (o.group(1) if o else "0d0d0d")
+    except Exception:
+        return "#d4d4d4", "#0d0d0d"
+
+
+FONT_STACKS = {
+    "sans": '"Google Sans Flex", "Inter", "Inter Variable", "Rubik", "Noto Sans", "Cantarell", "Symbols Nerd Font", "JetBrainsMono Nerd Font", sans-serif',
+    "rounded": '"Rubik", "Nunito", "Quicksand", "Inter", "Noto Sans", "Symbols Nerd Font", "JetBrainsMono Nerd Font", sans-serif',
+    "mono": '"JetBrainsMono Nerd Font", "JetBrains Mono", monospace',
+}
+
+
+def font(c):
+    if c["font"] in FONT_STACKS:
+        return FONT_STACKS[c["font"]]
+    try:
+        f = json.load(open(FONTS))
+        return '"%s", "Symbols Nerd Font", sans-serif' % (f.get("main") or "Noto Sans").replace('"', "")
+    except Exception:
+        return "sans-serif"
+
+
+def palette(c, acc):
+    """base surface rgb, text, secondary text, card overlay"""
+    k = c["colors"]
+    if k == "black":
+        return (0, 0, 0), "#F6F5F4", "#9a9aa4", "rgba(255, 255, 255, 0.07)"
+    if k == "slate":
+        return (24, 27, 34), "#EEF1F6", "#9aa4b5", "rgba(255, 255, 255, 0.06)"
+    if k == "white":
+        return (246, 245, 244), "#141414", "#5c5c64", "rgba(0, 0, 0, 0.05)"
+    if k == "tinted":
+        h = acc.lstrip("#")
+        try:
+            a = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        except Exception:
+            a = (212, 212, 212)
+        return tuple(int(14 + (x - 14) * 0.14) for x in a), "#F6F5F4", "#a8a8b4", "rgba(255, 255, 255, 0.07)"
+    if k == "shell":
+        # the shell's own look: dark, a hint of your theme color
+        h = acc.lstrip("#")
+        try:
+            a = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+        except Exception:
+            a = (212, 212, 212)
+        return tuple(int(20 + (x - 20) * 0.08) for x in a), "#ECEDEE", "#A9ADB2", "rgba(255, 255, 255, 0.06)"
+    return (18, 18, 20), "#F6F5F4", "#9a9aa4", "rgba(255, 255, 255, 0.06)"
+
+
+def backup_once(path, suf):
+    if os.path.exists(path) and not os.path.exists(path + suf):
+        shutil.copy2(path, path + suf)
+
+
+# ---------------- config.json ----------------
+def write_config(c):
+    try:
+        j = json.load(open(SWCFG))
+    except FileNotFoundError:
+        j = {"$schema": "/etc/xdg/swaync/configSchema.json"}
+    except Exception as e:
+        die("swaync config.json is not valid JSON, not touching it: %s" % e)
+    backup_once(SWCFG, ".bak-rice-notify")
+    j["positionX"] = c["pos_x"]          # popups: left, center or right
+    j["positionY"] = c["pos_y"]
+    deck = c["layout"] == "deck"
+    if deck:
+        # the panel has its own side; floating = a gap all around, otherwise flat against the edge, full height
+        sideways = c["cc_side"] in ("left", "right")
+        j["control-center-positionX"] = c["cc_side"] if sideways else "center"
+        j["control-center-positionY"] = "top" if sideways else c["cc_side"]
+        gap = c["margin"] if c["cc_float"] else 0
+        for side in ("top", "bottom", "left", "right"):
+            j["control-center-margin-" + side] = gap
+        # on the left or right: full height; at the top or bottom: only as tall as set (Height)
+        j["fit-to-screen"] = (c["fit"] or not c["cc_float"]) if sideways else False
+    else:
+        j.pop("control-center-positionX", None)
+        j.pop("control-center-positionY", None)
+        for side in ("top", "bottom", "left", "right"):
+            j["control-center-margin-" + side] = c["margin"]
+        j["fit-to-screen"] = c["fit"]
+    j["control-center-width"] = c["panel_width"]
+    j["control-center-height"] = c["panel_height"]
+    j["notification-window-width"] = c["popup_width"]
+    j["timeout"] = c["timeout"]
+    j["timeout-low"] = max(2, c["timeout"] // 2)
+    j["timeout-critical"] = 0 if c["critical_sticky"] else c["timeout"]
+    j["notification-icon-size"] = c["icon_size"]
+    # one flat list: grouped (stacked) notifications of the same app piled on top of each other
+    j["notification-grouping"] = False
+    j["image-visibility"] = "when-available" if c["images"] else "never"
+    light = backlight_device()
+    have_pp = power_profiles_ok()
+    j["widgets"] = [w for w in ORDER[c["layout"]] if w == "notifications" or c[WKEY[w]]]
+    # hide rows this computer cannot use (no screen brightness on a desktop PC, no power-profiles-daemon)
+    j["widgets"] = [w for w in j["widgets"] if not (w == "backlight" and not light) and not (w == "buttons-grid#power" and not have_pp)]
+    wc = j.setdefault("widget-config", {})
+    if deck:
+        wc.update(deck_widgets(c, light))
+    wc.setdefault("title", {"text": "Notifications", "clear-all-button": True, "button-text": "Clear all"})
+    wc.setdefault("dnd", {"text": "Do Not Disturb"})
+    wc.setdefault("mpris", {"image-size": 56, "image-radius": 12})
+    wc.setdefault("volume", {"label": chr(0xF057E)})
+    wc.setdefault("buttons-grid", {"actions": []})
+    # sound for new notifications: swaync runs rice-sound, which checks Do Not Disturb itself
+    scripts = j.get("scripts") if isinstance(j.get("scripts"), dict) else {}
+    scripts.pop("rice-sound", None)
+    if c["sound"] != "off":
+        scripts["rice-sound"] = {"exec": RUN + " rice-sound notify", "app-name": ".*", "run-on": "receive"}
+    # swaync removes a notification when you click it (only "resident" ones stay). With keep_clicked
+    # rice-notify keep puts a quiet copy back right away: muted (no popup, no sound), resident (stays
+    # when clicked again), and the next click on it does nothing special.
+    scripts.pop("rice-keep", None)
+    vis = j.get("notification-visibility") if isinstance(j.get("notification-visibility"), dict) else {}
+    vis.pop("rice-kept", None)
+    if c["keep_clicked"]:
+        scripts["rice-keep"] = {"exec": RUN + " rice-notify keep", "app-name": ".*", "run-on": "action"}
+        vis["rice-kept"] = {"category": "^rice\\.kept$", "state": "muted"}
+    if vis:
+        j["notification-visibility"] = vis
+    else:
+        j.pop("notification-visibility", None)
+    if scripts:
+        j["scripts"] = scripts
+    else:
+        j.pop("scripts", None)
+    j["script-fail-notify"] = False
+    tmp = SWCFG + ".tmp"
+    os.makedirs(SW, exist_ok=True)
+    json.dump(j, open(tmp, "w"), indent=2, ensure_ascii=False)
+    os.replace(tmp, SWCFG)
+
+
+def power_profiles_ok():
+    """power modes work: powerprofilesctl is installed and the daemon answers (laptops and desktop PCs alike)"""
+    if not shutil.which("powerprofilesctl"):
+        return False
+    try:
+        return subprocess.run(["powerprofilesctl", "get"], capture_output=True, timeout=3).returncode == 0
+    except Exception:
+        return False
+
+
+def backlight_device():
+    try:
+        devs = sorted(os.listdir("/sys/class/backlight"))
+    except Exception:
+        devs = []
+    return devs[0] if devs else ""
+
+
+def deck_widgets(c, light):
+    """widget-config of the Deck: three rows of buttons (swaync buttons-grid) and the sliders"""
+    def tog(icon, key):
+        return {"label": icon, "type": "toggle", "active": False,
+                "command": "%s toggle %s" % (SVC, key), "update-command": "%s is %s" % (SVC, key)}
+
+    quick = [tog(chr(0xF05A9), "wifi"), tog(chr(0xF00AF), "bluetooth"), tog(chr(0xF009B), "dnd")]
+    if shutil.which("hyprsunset") or (os.environ.get("NIRI_SOCKET") and shutil.which("gammastep")):
+        quick.append(tog(chr(0xF0594), "nightlight"))
+    quick.append(tog(chr(0xF0176), "awake"))
+    if len(quick) < 5:
+        quick.append(tog(chr(0xF036C), "mic"))
+    session = [{"label": chr(0xF033E), "command": SVC + " session lock"},
+               {"label": chr(0xF04B2), "command": SVC + " session suspend"},
+               {"label": chr(0xF0343), "command": SVC + " session logout"},
+               {"label": chr(0xF0709), "command": SVC + " session reboot"},
+               {"label": chr(0xF0425), "command": SVC + " session poweroff"}]
+    w = {
+        "buttons-grid#quick": {"buttons-per-row": len(quick), "actions": quick},
+        "buttons-grid#session": {"buttons-per-row": 5, "actions": session},
+        "title": {"text": "Notifications", "clear-all-button": True, "button-text": chr(0xF0A7A) + "  Clear"},
+        "volume": {"label": chr(0xF057E), "show-per-app": False},
+        "mpris": {"image-size": 52, "image-radius": 12},
+    }
+    if light:
+        w["backlight"] = {"label": chr(0xF00DF), "device": light, "subsystem": "backlight"}
+    return w
+
+
+# ---------------- style.css ----------------
+def css(c):
+    acc, on_acc = accent() if c["accent"] else ("#F6F5F4", "#0d0d0d")
+    base, fg, dim, card0 = palette(c, acc)
+    light = c["colors"] == "white"
+    op = c["opacity"]
+    pop = c["popup_opacity"]
+    r = c["radius"]
+    ri = max(r - 6, 4)
+    pad = 8 if c["compact"] else 12
+
+    def bgc(a):
+        return "rgba(%d, %d, %d, %.2f)" % (base[0], base[1], base[2], a)
+
+    edge = "rgba(0, 0, 0, 0.10)" if light else "rgba(255, 255, 255, 0.09)"
+    if c["border"] == "accent":
+        edge = acc
+    elif c["border"] == "none":
+        edge = "transparent"
+    # a notification card is never see-through, so cards can never show each other's text
+    ink = (0, 0, 0) if light else (255, 255, 255)
+    extra = {}
+    if c["style"] == "solid":
+        # Dark: no blur, no transparency, flat opaque surfaces
+        bg, card, bd = bgc(1.0), rgbs(mixc(base, ink, 0.06)), edge
+        ncard = rgbs(mixc(base, ink, 0.07))
+        extra = dict(tile=rgbs(mixc(base, ink, 0.07)), tileh=rgbs(mixc(base, ink, 0.12)), track=rgbs(mixc(base, ink, 0.12)),
+                     btn=rgbs(mixc(base, ink, 0.09)), chk="#ffffff")
+        popup = bgc(1.0)
+    elif c["style"] == "google":
+        # Google: Material-like tonal surfaces tinted with your accent, big round corners, no borders, no blur
+        a = hex_rgb(acc)
+        b0 = (250, 248, 252) if light else (20, 19, 24)
+        k = (0.07, 0.12, 0.18, 0.24) if not light else (0.06, 0.11, 0.17, 0.23)
+        surf, cont, high, highest = (mixc(b0, a, x) for x in k)
+        bg, card, bd = rgbs(surf), rgbs(cont), "transparent"
+        ncard = rgbs(cont)
+        r = min(40, c["radius"] + 10)
+        ri = min(28, c["radius"] + 4)
+        extra = dict(tile=rgbs(high), tileh=rgbs(highest), track=rgbs(highest), btn=rgbs(high), chk=on_acc, google=True)
+        popup = rgbs(cont)
+    elif c["style"] == "outline":
+        bg, card, bd = bgc(op), bgc(op), (acc if c["border"] != "none" else "transparent")
+        ncard = card
+        popup = bgc(pop)
+    else:
+        # DarkShadow Shell: frosted glass
+        bg, card, bd = bgc(op), card0, edge
+        gr = mixc(base, ink, 0.08)
+        ncard = "rgba(%d, %d, %d, 0.92)" % gr
+        popup = bgc(pop)
+    shadow = ("0 2px 6px rgba(0, 0, 0, 0.30)" if c["shadow"] else "none")
+    v = dict(f=font(c), fs=c["font_size"], acc=acc, onacc=on_acc, bg=bg, card=card, bd=bd, popup=popup, r=r, ri=ri,
+             pad=pad, pad2=pad // 2 + 2, fg=fg, dim=dim, shadow=shadow,
+             btn=("rgba(0, 0, 0, 0.07)" if light else "rgba(255, 255, 255, 0.08)"),
+             fs1=c["font_size"] + 1, fs2=max(9, c["font_size"] - 2),
+             hover=("rgba(0, 0, 0, 0.04)" if light else "rgba(255, 255, 255, 0.04)"), ncard=ncard)
+    v["chk"] = "#ffffff"
+    v.update(extra)
+    return """%(begin)s
+/* generated by rice-notify (Settings > Notifications). Rules above stay, these win. */
+.control-center, .floating-notifications, .blank-window {
+  font-family: %(f)s;
+  font-size: %(fs)dpx;
+}
+/* strong selectors: beat a global "* { font-family }" from older themes */
+.control-center *, .floating-notifications * {
+  font-family: %(f)s;
+}
+.control-center label, .floating-notifications label {
+  font-size: %(fs)dpx;
+}
+.floating-notifications .notification-row .notification-background .notification .summary,
+.control-center .notification-row .notification-background .notification .summary {
+  font-size: %(fs1)dpx;
+}
+.floating-notifications .notification-row .notification-background .notification .time,
+.control-center .notification-row .notification-background .notification .time {
+  font-size: %(fs2)dpx;
+}
+/* clean wrappers: only the card itself has a background (no dark frame around popups) */
+.floating-notifications .notification-row,
+.floating-notifications .notification-row .notification-background,
+.floating-notifications .notification-row .notification-background .notification .notification-default-action,
+.floating-notifications .notification-row .notification-background .notification .notification-content,
+.control-center .notification-row,
+.control-center .notification-row .notification-background,
+.control-center .notification-row .notification-background .notification .notification-default-action,
+.control-center .notification-row .notification-background .notification .notification-content {
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  outline: none;
+}
+.notification-row .notification-background .notification .notification-default-action:hover {
+  background: %(hover)s;
+}
+.blank-window, .floating-notifications {
+  background: transparent;
+}
+.control-center {
+  background: %(bg)s;
+  border: 1px solid %(bd)s;
+  border-radius: %(r)dpx;
+  padding: %(pad)dpx;
+  color: %(fg)s;
+}
+.control-center .control-center-list {
+  background: transparent;
+}
+.control-center .control-center-list-placeholder {
+  color: %(dim)s;
+}
+.notification-row {
+  outline: none;
+  background: transparent;
+}
+.notification-row .notification-background {
+  padding: %(pad2)dpx %(pad)dpx;
+  background: transparent;
+}
+.notification-row .notification-background .notification {
+  background: %(ncard)s;
+  border: 1px solid %(bd)s;
+  border-radius: %(ri)dpx;
+  padding: %(pad)dpx;
+  color: %(fg)s;
+}
+.floating-notifications .notification-row .notification-background .notification {
+  background: %(popup)s;
+  border-radius: %(r)dpx;
+  box-shadow: %(shadow)s;
+}
+.notification-row .notification-background .notification.critical {
+  border: 1px solid rgba(255, 107, 107, 0.7);
+}
+.notification-row .notification-background .notification .summary {
+  font-weight: bold;
+  color: %(fg)s;
+}
+.notification-row .notification-background .notification .body {
+  color: %(dim)s;
+}
+.notification-row .notification-background .notification .time {
+  color: %(dim)s;
+  font-size: 0.85em;
+}
+.notification-row .notification-background .notification .image,
+.notification-row .notification-background .notification .app-icon {
+  border-radius: %(ri)dpx;
+}
+.notification-row .notification-background .close-button {
+  background: %(btn)s;
+  color: %(fg)s;
+  border-radius: 100px;
+  min-width: 22px;
+  min-height: 22px;
+}
+.notification-row .notification-background .close-button:hover {
+  background: %(acc)s;
+  color: %(onacc)s;
+}
+.notification-row .notification-background .notification .notification-action {
+  border-radius: %(ri)dpx;
+  background: %(btn)s;
+}
+.notification-row .notification-background .notification .notification-action:hover {
+  background: %(acc)s;
+  color: %(onacc)s;
+}
+.notification-group .notification-group-headers {
+  color: %(dim)s;
+}
+.widget-title {
+  margin: %(pad2)dpx %(pad)dpx;
+}
+.widget-title > label {
+  font-size: 1.25em;
+  font-weight: bold;
+  color: %(fg)s;
+}
+.widget-title > button {
+  background: %(btn)s;
+  color: %(fg)s;
+  border-radius: 100px;
+  padding: 4px 14px;
+  border: none;
+}
+.widget-title > button:hover {
+  background: %(acc)s;
+  color: %(onacc)s;
+}
+.widget-dnd {
+  margin: %(pad2)dpx %(pad)dpx;
+  color: %(fg)s;
+}
+.widget-dnd > switch {
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.10);
+}
+.widget-dnd > switch:checked {
+  background: %(acc)s;
+}
+.widget-dnd > switch slider {
+  border-radius: 100px;
+  background: %(fg)s;
+}
+.widget-mpris {
+  margin: %(pad2)dpx %(pad)dpx;
+}
+.widget-mpris .widget-mpris-player {
+  background: %(card)s;
+  border: 1px solid %(bd)s;
+  border-radius: %(ri)dpx;
+  padding: %(pad)dpx;
+}
+.widget-mpris .widget-mpris-title {
+  font-weight: bold;
+}
+.widget-mpris .widget-mpris-subtitle {
+  color: %(dim)s;
+}
+.widget-buttons-grid {
+  margin: %(pad2)dpx %(pad)dpx;
+  padding: %(pad2)dpx;
+  background: %(card)s;
+  border-radius: %(ri)dpx;
+}
+.widget-buttons-grid > flowbox > flowboxchild > button {
+  background: %(btn)s;
+  color: %(fg)s;
+  border-radius: %(ri)dpx;
+  border: none;
+  min-height: 40px;
+  font-size: 1.15em;
+}
+.widget-buttons-grid > flowbox > flowboxchild > button:hover,
+.widget-buttons-grid > flowbox > flowboxchild > button:checked {
+  background: %(acc)s;
+  color: %(onacc)s;
+}
+.widget-volume {
+  margin: %(pad2)dpx %(pad)dpx;
+  padding: %(pad2)dpx %(pad)dpx;
+  background: %(card)s;
+  border-radius: %(ri)dpx;
+}
+.widget-volume trough highlight {
+  background: %(acc)s;
+}
+%(popupcss)s
+%(deckcss)s
+%(end)s
+%(googlecss)s
+""" % dict(v, begin=BEGIN, end=END, popupcss=popup_css(c, acc, on_acc), deckcss=deck_css(c, v), googlecss=google_css(c, v))
+
+
+def hex_rgb(h):
+    h = (h or "").lstrip("#")
+    try:
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        return (212, 212, 212)
+
+
+def mixc(a, b, k):
+    return tuple(int(round(a[i] + (b[i] - a[i]) * k)) for i in range(3))
+
+
+def rgbs(t):
+    return "rgb(%d, %d, %d)" % t
+
+
+def deck_css(c, v):
+    """The Deck notification center: rounded tiles, big soft sliders, power buttons at the bottom."""
+    if c["layout"] != "deck":
+        return ""
+    r = v["r"]
+    if c["cc_float"]:
+        rad = "%dpx" % r
+    else:
+        rad = {"right": "%dpx 0 0 %dpx" % (r, r), "left": "0 %dpx %dpx 0" % (r, r),
+               "top": "0 0 %dpx %dpx" % (r, r), "bottom": "%dpx %dpx 0 0" % (r, r)}.get(c["cc_side"], "%dpx" % r)
+    light = c["colors"] == "white"
+    tile = v.get("tile") or ("rgba(0, 0, 0, 0.06)" if light else "rgba(255, 255, 255, 0.07)")
+    tile_h = v.get("tileh") or ("rgba(0, 0, 0, 0.10)" if light else "rgba(255, 255, 255, 0.12)")
+    track = v.get("track") or ("rgba(0, 0, 0, 0.10)" if light else "rgba(255, 255, 255, 0.10)")
+    return """/* ---- Deck ---- */
+.control-center {
+  border-radius: %(rad)s;
+  padding: 12px 10px;
+}
+.control-center .widget-buttons-grid {
+  background: transparent;
+  padding: 0;
+  margin: 3px 6px;
+  border-radius: 0;
+}
+.control-center .widget-buttons-grid > flowbox > flowboxchild {
+  padding: 3px;
+}
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button {
+  background: %(tile)s;
+  color: %(fg)s;
+  border: none;
+  box-shadow: none;
+  border-radius: 16px;
+  min-height: 50px;
+  font-size: 1.45em;
+  transition: background 160ms ease, color 160ms ease;
+}
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:hover {
+  background: %(tileh)s;
+}
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked,
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked:hover {
+  background: %(acc)s;
+  color: %(chk)s;  /* switched on */
+}
+/* the icon of a switch that is on stays white, whatever older rules say */
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked label,
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked * {
+  color: %(chk)s;
+}
+/* switches: big round-cornered squares */
+.control-center .widget-buttons-grid.quick > flowbox > flowboxchild > button {
+  min-height: 58px;
+  border-radius: 18px;
+  font-size: 1.6em;
+}
+/* power buttons at the bottom: quieter, red on hover for the last one */
+.control-center .widget-buttons-grid.session {
+  margin-top: 8px;
+}
+.control-center .widget-buttons-grid.session > flowbox > flowboxchild > button {
+  min-height: 46px;
+  border-radius: 14px;
+  font-size: 1.3em;
+}
+.control-center .widget-buttons-grid.session > flowbox > flowboxchild:last-child > button:hover {
+  background: rgba(224, 80, 90, 0.85);
+  color: #ffffff;
+}
+.control-center .widget-title {
+  margin: 10px 12px 4px 12px;
+}
+.control-center .widget-title > label {
+  font-size: 1.05em;
+  font-weight: bold;
+  color: %(dim)s;
+}
+.control-center .widget-title > button {
+  padding: 3px 12px;
+  font-size: 0.9em;
+}
+/* volume and brightness: soft, thick sliders without a knob */
+.control-center .widget-volume,
+.control-center .widget-backlight {
+  background: %(tile)s;
+  border-radius: 16px;
+  margin: 3px 9px;
+  padding: 6px 14px;
+}
+.control-center .widget-volume label,
+.control-center .widget-backlight label {
+  font-size: 1.35em;
+  color: %(fg)s;
+  min-width: 26px;
+}
+.control-center .widget-volume trough,
+.control-center .widget-backlight trough {
+  min-height: 12px;
+  border-radius: 100px;
+  background: %(track)s;
+}
+.control-center .widget-volume highlight,
+.control-center .widget-backlight highlight {
+  min-height: 12px;
+  border-radius: 100px;
+  background: %(acc)s;
+}
+.control-center .widget-volume slider,
+.control-center .widget-backlight slider {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+}
+.control-center .widget-mpris {
+  margin: 3px 9px;
+}
+""" % dict(v, rad=rad, tile=tile, tileh=tile_h, track=track)
+
+
+def google_css(c, v):
+    """Google look: pill buttons, tonal cards, readable icons on the accent."""
+    if c["style"] != "google":
+        return ""
+    return """/* ---- Google ---- */
+.control-center .widget-buttons-grid.quick > flowbox > flowboxchild > button {
+  border-radius: 24px;
+}
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked,
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked:hover,
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked label,
+.control-center .widget-buttons-grid > flowbox > flowboxchild > button:checked * {
+  color: %(onacc)s;
+}
+.control-center .widget-title > label {
+  font-size: 1.3em;
+  color: %(fg)s;
+}
+.control-center .widget-title > button {
+  background: %(tile)s;
+  padding: 5px 16px;
+}
+.notification-row .notification-background .notification {
+  border: none;
+}
+.notification-row .notification-background .notification .summary {
+  font-weight: 600;
+}
+.notification-row .notification-background .notification .image,
+.notification-row .notification-background .notification .app-icon {
+  border-radius: 100px;
+}
+.control-center .widget-volume, .control-center .widget-backlight {
+  border-radius: 24px;
+}
+.control-center .widget-volume trough, .control-center .widget-backlight trough,
+.control-center .widget-volume highlight, .control-center .widget-backlight highlight {
+  min-height: 16px;
+}
+""" % v
+
+
+
+def hex_rgba(h, a):
+    h = h.lstrip("#")
+    try:
+        return "rgba(%d, %d, %d, %.2f)" % (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), a)
+    except Exception:
+        return "rgba(212, 212, 212, %.2f)" % a
+
+
+def popup_css(c, acc, on_acc):
+    """Extra look for the popups only (the notification center keeps the 'Look' setting)."""
+    st = c["popup_style"]
+    if st == "match":
+        return ""
+    base, fg, dim, _ = palette(c, acc)
+    pop = c["popup_opacity"]
+
+    def bgc(a):
+        return "rgba(%d, %d, %d, %.2f)" % (base[0], base[1], base[2], a)
+
+    P = ".floating-notifications .notification-row .notification-background .notification"
+    r = c["radius"]
+    line = "rgba(0, 0, 0, 0.08)" if c["colors"] == "white" else "rgba(255, 255, 255, 0.10)"
+    if c["border"] == "none":
+        line = "transparent"
+    elif c["border"] == "accent":
+        line = acc
+    rules = {
+        "glass":   "background: %s;\n  border: 1px solid %s;\n  border-radius: %dpx;" % (bgc(min(pop, 0.62)), line, r),
+        "solid":   "background: %s;\n  border: 1px solid %s;\n  border-radius: %dpx;" % (bgc(1.0), line, r),
+        "minimal": "background: %s;\n  border: none;\n  border-radius: 8px;\n  padding: 8px 10px;" % bgc(pop),
+        "pill":    "background: %s;\n  border: 1px solid %s;\n  border-radius: 999px;\n  padding: 6px 18px;" % (bgc(pop), line),
+        "accent":  "background: %s;\n  border: 1px solid %s;\n  border-left: 4px solid %s;\n  border-radius: 10px;" % (bgc(pop), line, acc),
+        "glow":    "background: %s;\n  border: 1px solid %s;\n  border-radius: %dpx;\n  box-shadow: 0 0 16px %s;" % (bgc(pop), acc, r, hex_rgba(acc, 0.45)),
+        "island":  "background: rgb(0, 0, 0);\n  border: none;\n  border-radius: 28px;\n  padding: 12px 18px;",
+        "light":   "background: rgba(246, 245, 244, %.2f);\n  border: 1px solid %s;\n  border-radius: %dpx;" % (max(pop, 0.9), "transparent" if c["border"] == "none" else "rgba(0, 0, 0, 0.08)", r),
+    }
+    out = ["/* popup style: %s */" % st, "%s {\n  %s\n}" % (P, rules[st])]
+    if st == "pill":
+        out.append("%s .image, %s .app-icon {\n  border-radius: 999px;\n}" % (P, P))
+    if st == "minimal":
+        out.append("%s .summary {\n  font-size: 0.95em;\n}" % P)
+    if st in ("light", "island"):
+        tf, td = ("#111111", "#555555") if st == "light" else ("#F6F5F4", "#9a9aa4")
+        out.append("%s .summary {\n  color: %s;\n}\n%s .body, %s .time {\n  color: %s;\n}" % (P, tf, P, P, td))
+    if st == "light":
+        out.append(".floating-notifications .notification-row .notification-background .close-button {\n"
+                   "  background: rgba(0, 0, 0, 0.08);\n  color: #111111;\n}")
+    return "\n".join(out)
+
+
+def strong(text):
+    # popups live in a window with both classes: ".floating-notifications.background".
+    # Using both makes our rules beat themes that use the same long selectors.
+    return text.replace(".floating-notifications .notification-row", ".floating-notifications.background .notification-row")
+
+
+def flat():
+    """rice-effects: blur and transparency are off right now (Lite, or gaming mode)"""
+    return os.path.exists(os.path.expanduser("~/.cache/rice/flat"))
+
+
+def write_css(c):
+    if flat():
+        c = dict(c, opacity=1.0, popup_opacity=1.0)
+    s = open(SWCSS).read() if os.path.exists(SWCSS) else ""
+    backup_once(SWCSS, ".bak-rice-notify")
+    s = re.sub(r"\n?" + re.escape(BEGIN) + r".*?" + re.escape(END) + r"\n?", "\n", s, flags=re.S)
+    os.makedirs(SW, exist_ok=True)
+    tmp = SWCSS + ".tmp"
+    open(tmp, "w").write(s.rstrip() + "\n\n" + strong(css(c)))
+    os.replace(tmp, SWCSS)
+
+
+# ---------------- blur (Hyprland layer rules) ----------------
+def lua_text(c):
+    out = ["-- generated by rice-notify (Settings > Notifications). Do not edit by hand.\n"]
+    flat_look = c["style"] in ("solid", "google")     # opaque looks: nothing to blur
+    # swaync's panel and pop-ups, and the shell's own: the control center and its pop-ups (rice-cc engine shell)
+    for ns, on, ia in (("swaync-control-center", c["blur"] and not flat_look, 0.1),
+                       ("swaync-notification-window", c["blur_popups"] and not flat_look, 0.1),
+                       ("rice-cc", c["blur"], 0.5), ("rice-notify-popup", c["blur_popups"], 0.5)):
+        if on:
+            out.append('hl.layer_rule({\n    name  = "%s-blur",\n    match = { namespace = "%s" },\n'
+                       '    blur = true,\n    ignore_alpha = %s,\n})\n' % (ns if ns.startswith("rice-") else "rice-" + ns, ns, ia))
+    return "".join(out)
+
+
+def wire_hypr():
+    if not os.path.exists(HLUA):
+        return False
+    s = open(HLUA).read()
+    n = re.sub(r'hl\.layer_rule\(\{\s*name\s*=\s*"swaync-blur",.*?\}\)\n?\n?', "", s, flags=re.S)
+    if 'require("rice-notify")' not in n:
+        a = 'require("rice-settings")'
+        n = n.replace(a, a + '\nrequire("rice-notify")') if n.count(a) == 1 else n.rstrip("\n") + '\n\nrequire("rice-notify")\n'
+    if n != s:
+        backup_once(HLUA, ".bak-notify")
+        open(HLUA, "w").write(n)
+        return True
+    return False
+
+
+def quiet(cmd, timeout=6):
+    if shutil.which(cmd[0]):
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            pass
+
+
+def keep_log(msg):
+    try:
+        os.makedirs(os.path.dirname(KEEP_LOG), exist_ok=True)
+        if os.path.exists(KEEP_LOG) and os.path.getsize(KEEP_LOG) > 64000:
+            os.replace(KEEP_LOG, KEEP_LOG + ".old")
+        with open(KEEP_LOG, "a") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except Exception:
+        pass
+
+
+def post_kept(app, icon, summary, body, urg):
+    """put the quiet copy in the notification center: notify-send, else plain D-Bus (busctl, gdbus)"""
+    ub = {"low": 0, "normal": 1, "critical": 2}[urg]
+    tries = []
+    if shutil.which("notify-send"):
+        tries.append(["notify-send", "-a", app, "-u", urg, "-i", icon, "-c", "rice.kept",
+                      "-h", "boolean:resident:true", "--", summary, body])
+    if shutil.which("busctl"):
+        tries.append(["busctl", "--user", "call", "--", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+                      "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", app, "0", icon, summary, body, "0",
+                      "3", "resident", "b", "true", "category", "s", "rice.kept", "urgency", "y", str(ub), "-1"])
+    if shutil.which("gdbus"):
+        def gv(t):
+            return "'" + t.replace("\\", "\\\\").replace("'", "\\'") + "'"
+        tries.append(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                      "--object-path", "/org/freedesktop/Notifications", "--method",
+                      "org.freedesktop.Notifications.Notify", "--", gv(app), "0", gv(icon), gv(summary), gv(body), "[]",
+                      "{'resident': <true>, 'category': <'rice.kept'>, 'urgency': <byte %d>}" % ub, "-1"])
+    if not tries:
+        return "no notify-send, busctl or gdbus found (PATH=%s)" % os.environ.get("PATH", "")
+    err = ""
+    for cmd in tries:
+        try:
+            r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=10)
+            if r.returncode == 0:
+                return ""
+            err += "%s: %s; " % (cmd[0], (r.stderr or "").strip()[:200])
+        except Exception as e:
+            err += "%s: %s; " % (cmd[0], e)
+    return err
+
+
+def keep():
+    """swaync runs this when a notification is clicked (just before it removes it): post a quiet copy that stays"""
+    e = os.environ
+    if e.get("SWAYNC_CATEGORY") == "rice.kept" or e.get("SWAYNC_HINT_RESIDENT", "").lower() in ("true", "1"):
+        return
+    summary, body = e.get("SWAYNC_SUMMARY", ""), e.get("SWAYNC_BODY", "")
+    if not summary and not body:
+        return
+    app = e.get("SWAYNC_APP_NAME") or "Notification"
+    urg = {"low": "low", "critical": "critical"}.get(e.get("SWAYNC_URGENCY", "").lower(), "normal")
+    icon = e.get("SWAYNC_DESKTOP_ENTRY") or app.lower()
+    # let go of swaync's pipe before anything else: swaync 0.12 crashes when it is still open after we end
+    try:
+        fd = os.open(os.devnull, os.O_RDWR)
+        for n in (0, 1, 2):
+            os.dup2(fd, n)
+        if fd > 2:
+            os.close(fd)
+    except OSError:
+        pass
+    if os.fork() > 0:      # give swaync its answer at once
+        return
+    os.setsid()
+    time.sleep(0.2)        # after swaync has removed the clicked one
+    err = post_kept(app, icon, summary, body, urg)
+    keep_log(("kept: " if not err else "FAILED: " + err + " for: ") + app + " / " + summary[:60])
+    os._exit(0)
+
+
+def doctor():
+    """why are clicked notifications gone? checks every part of 'keep clicked notifications'"""
+    c = load()
+    ok = lambda b: "ok  " if b else "NO  "
+    print(ok(shutil.which("swaync") or shutil.which("swaync-client")), "swaync installed")
+    running = subprocess.run(["pgrep", "-x", "swaync"], stdout=subprocess.DEVNULL).returncode == 0 if shutil.which("pgrep") else False
+    print(ok(running), "swaync running")
+    print(ok(c["keep_clicked"]), "Keep clicked notifications is on (Settings > Notifications)")
+    try:
+        j = json.load(open(SWCFG))
+    except Exception:
+        j = {}
+    sc = (j.get("scripts") or {}).get("rice-keep", {})
+    print(ok(sc.get("exec", "").startswith(RUN)), "swaync config runs it:", sc.get("exec", "(missing)"))
+    vis = (j.get("notification-visibility") or {}).get("rice-kept", {})
+    print(ok(vis.get("state") == "muted"), "kept copies go only to the notification center")
+    print(ok(os.path.exists(HOME + "/.local/bin/rice-run")), "~/.local/bin/rice-run")
+    tools = [t for t in ("notify-send", "busctl", "gdbus") if shutil.which(t)]
+    print(ok(tools), "a way to post notifications:", ", ".join(tools) or "none (install libnotify)")
+    if os.path.exists("/proc"):
+        for pid in os.listdir("/proc"):
+            try:
+                if open("/proc/%s/comm" % pid).read().strip() != "swaync":
+                    continue
+                env = open("/proc/%s/environ" % pid, "rb").read().split(b"\0")
+                path = next((x[5:].decode() for x in env if x.startswith(b"PATH=")), "")
+                py = any(os.path.exists(d + "/python3") for d in path.split(":") if d)
+                print(ok(py), "swaync can find python3 by itself", "" if py else "(rice-run fixes this)")
+                break
+            except Exception:
+                continue
+    if os.path.exists(KEEP_LOG):
+        print("\nlast clicks (" + KEEP_LOG + "):")
+        print("".join(open(KEEP_LOG).readlines()[-5:]).rstrip())
+    else:
+        print("\nno click logged yet: click a notification, then run rice-notify doctor again")
+
+
+def shell_engine():
+    """the shell shows notifications itself (rice-cc engine shell): swaync stays off, so no swaync-client calls
+    (they would start swaync again through D-Bus)"""
+    try:
+        return json.load(open(HOME + "/.config/rice/cc.json")).get("engine") == "shell"
+    except Exception:
+        return False
+
+
+def apply(c, reload_hypr=False):
+    # the blur rules first: a broken swaync style must never cost the shell its blur
+    for f in (write_config, write_css):
+        try:
+            f(c)
+        except Exception as e:
+            print("rice-notify: %s skipped (%s)" % (f.__name__, e), file=sys.stderr)
+    old = open(LUA).read() if os.path.exists(LUA) else None
+    new = lua_text(c)
+    changed = old != new
+    if changed:
+        os.makedirs(os.path.dirname(LUA), exist_ok=True)
+        open(LUA, "w").write(new)
+    if wire_hypr():
+        changed = True
+    if not shell_engine():
+        quiet(["swaync-client", "-R", "-sw"])
+        quiet(["swaync-client", "-rs", "-sw"])
+    if changed or reload_hypr:
+        quiet([os.path.expanduser("~/.local/bin/rice-wm"), "reload"])
+
+
+def test():
+    # plain D-Bus call, works without notify-send
+    quiet(["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+           "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "DarkShadow's Shell", "0",
+           (HOME + "/.face") if os.path.exists(HOME + "/.face") else "dialog-information", "Hello from DarkShadow's Shell",
+           "This is how your notifications look. Change them in Settings > Notifications.", "0", "0", "6000"])
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "keep":
+        keep()
+        return
+    if cmd == "doctor":
+        doctor()
+        return
+    if cmd == "state":
+        out = load()
+        out["accent_color"], out["on_accent"] = accent()
+        out["installed"] = shutil.which("swaync-client") is not None
+        out["have_power_profiles"] = power_profiles_ok()
+        out["have_backlight"] = backlight_device() != ""
+        out["flat"] = flat()
+        print(json.dumps(out))
+        return
+    if cmd == "test":
+        test()
+        return
+    if cmd == "panel":
+        if shell_engine():
+            quiet([HOME + "/.local/bin/rice-cc", "open"])
+        else:
+            quiet(["swaync-client", "-t", "-sw"])
+        return
+    os.makedirs(DIR, exist_ok=True)
+    lk = open(DIR + "/.notify.lock", "w")
+    fcntl.flock(lk, fcntl.LOCK_EX)
+    if cmd == "apply":
+        c = load()
+        save(c)
+        apply(c, reload_hypr="--reload" in argv)
+    elif cmd == "set":
+        if len(argv) < 4 or argv[2] not in DEFAULTS:
+            die("usage: rice-notify set KEY VALUE   keys: " + " ".join(DEFAULTS))
+        k, v = argv[2], argv[3]
+        c = load()
+        d = DEFAULTS[k]
+        if isinstance(d, bool):
+            c[k] = v.lower() in ("1", "true", "on", "yes")
+        elif k in CHOICES:
+            if v not in CHOICES[k]:
+                die("%s: %s" % (k, "|".join(CHOICES[k])))
+            c[k] = v
+        elif k in FLOATS:
+            c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+        else:
+            c[k] = int(clamp(float(v), *INTS[k]))
+        save(c)
+        apply(c)
+    elif cmd == "reset":
+        if os.path.exists(CFG):
+            os.remove(CFG)
+        c = load()
+        save(c)
+        apply(c)
+    elif cmd == "restore":
+        for p, b in ((SWCFG, ".bak-rice-notify"), (SWCSS, ".bak-rice-notify"), (HLUA, ".bak-notify")):
+            if os.path.exists(p + b):
+                shutil.copy2(p + b, p)
+                print("restored", p)
+        if os.path.exists(LUA):
+            os.remove(LUA)
+        quiet(["swaync-client", "-R", "-sw"])
+        quiet(["swaync-client", "-rs", "-sw"])
+        quiet([os.path.expanduser("~/.local/bin/rice-wm"), "reload"])
+    else:
+        die(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

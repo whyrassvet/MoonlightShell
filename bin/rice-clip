@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""rice-clip: the clipboard history of DarkShadow's Shell (cliphist underneath). SUPER + V opens it.
+
+  rice-clip open | toggle | close   show the clipboard panel
+  rice-clip list [N]                JSON: the newest N entries (text, or images with a small picture)
+  rice-clip copy ID                 put an entry back on the clipboard (and paste it, when Paste is on)
+  rice-clip delete ID               remove one entry
+  rice-clip pin ID | unpin TEXT     keep a text at the top (pins live in clipboard.json, wiping leaves them)
+  rice-clip wipe                    forget the whole history (the pins stay)
+  rice-clip watch                   start the watchers (wl-paste --watch cliphist store), once per session
+  rice-clip state                   JSON: settings and whether cliphist / wl-paste / wtype are there
+  rice-clip set KEY VALUE           enabled|paste|images on|off, max 50..1000
+"""
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CFG = HOME + "/.config/rice/clipboard.json"
+CACHE = HOME + "/.cache/rice"
+THUMBS = CACHE + "/clip"
+DEFAULTS = {"enabled": True, "paste": True, "images": True, "max": 200, "pins": []}
+
+
+def load():
+    c = dict(DEFAULTS)
+    try:
+        j = json.load(open(CFG))
+        for k in DEFAULTS:
+            if k in j:
+                c[k] = j[k]
+    except Exception:
+        pass
+    try:
+        c["max"] = max(50, min(1000, int(c["max"])))
+    except Exception:
+        c["max"] = 200
+    if not isinstance(c["pins"], list):
+        c["pins"] = []
+    return c
+
+
+def save(c):
+    os.makedirs(os.path.dirname(CFG), exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"), indent=1)
+    os.replace(tmp, CFG)
+
+
+def run(cmd, inp=None, timeout=4, text=True):
+    try:
+        r = subprocess.run(cmd, input=inp, capture_output=True, timeout=timeout, text=text)
+        return r.returncode, r.stdout
+    except Exception:
+        return 1, "" if text else b""
+
+
+def have(t):
+    return shutil.which(t) is not None
+
+
+def cliphist(*a, inp=None, text=True, timeout=4):
+    c = load()
+    return run(["cliphist", "-max-items", str(c["max"])] + list(a), inp=inp, text=text, timeout=timeout)
+
+
+def entry_line(cid):
+    code, out = cliphist("list")
+    for line in out.splitlines():
+        if line.split("\t", 1)[0] == str(cid):
+            return line
+    return ""
+
+
+def thumb(cid, preview):
+    """a small picture for an image entry (made once, kept in ~/.cache/rice/clip)"""
+    os.makedirs(THUMBS, exist_ok=True)
+    key = hashlib.sha1(("%s|%s" % (cid, preview)).encode()).hexdigest()[:16]
+    p = THUMBS + "/" + key + ".png"
+    if os.path.exists(p):
+        return p
+    code, data = cliphist("decode", inp=entry_line(cid) + "\n", text=False)
+    if code != 0 or not data:
+        return ""
+    raw = THUMBS + "/" + key + ".raw"
+    open(raw, "wb").write(data)
+    if have("magick"):
+        run(["magick", raw, "-thumbnail", "480x480>", p], timeout=8)
+    elif have("convert"):
+        run(["convert", raw, "-thumbnail", "480x480>", p], timeout=8)
+    if not os.path.exists(p):
+        os.replace(raw, p)       # Qt reads png / jpg / webp itself; a full size picture is fine too
+    else:
+        os.remove(raw)
+    return p
+
+
+def cmd_list(n=60):
+    c = load()
+    out = {"items": [], "pins": c["pins"], "ok": have("cliphist")}
+    if not out["ok"]:
+        print(json.dumps(out))
+        return
+    code, txt = cliphist("list")
+    imgs = 0
+    for line in txt.splitlines()[:max(1, n)]:
+        cid, _, prev = line.partition("\t")
+        if not cid.isdigit():
+            continue
+        if prev.startswith("[[ binary data") and prev.rstrip().endswith("]]"):
+            if not c["images"]:
+                continue
+            e = {"id": int(cid), "kind": "image", "text": prev.strip("[] ").replace("binary data ", "")}
+            if imgs < 24:
+                e["img"] = thumb(cid, prev)
+                imgs += 1
+            out["items"].append(e)
+        else:
+            out["items"].append({"id": int(cid), "kind": "text", "text": prev[:600]})
+    # old pictures nobody shows any more go
+    try:
+        keep = {os.path.basename(e.get("img", "")) for e in out["items"]}
+        for f in os.listdir(THUMBS):
+            if f not in keep and time.time() - os.path.getmtime(THUMBS + "/" + f) > 3600:
+                os.remove(THUMBS + "/" + f)
+    except OSError:
+        pass
+    print(json.dumps(out))
+
+
+def paste_later():
+    """paste into the window that had the keyboard (the panel closes first, so give it a moment)"""
+    if not load()["paste"] or not have("wtype"):
+        return
+    subprocess.Popen(["bash", "-c", "sleep 0.25; wtype -M ctrl -k v -m ctrl"], stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def cmd_copy(cid):
+    line = entry_line(cid)
+    if not line:
+        sys.exit(1)
+    code, data = cliphist("decode", inp=line + "\n", text=False)
+    if code != 0:
+        sys.exit(1)
+    run(["wl-copy"], inp=data, text=False)
+    paste_later()
+
+
+def cmd_copy_text(t):
+    run(["wl-copy", "--", t])
+    paste_later()
+
+
+def cmd_delete(cid):
+    line = entry_line(cid)
+    if line:
+        cliphist("delete", inp=line + "\n")
+
+
+def cmd_pin(cid):
+    line = entry_line(cid)
+    if not line:
+        return
+    code, t = cliphist("decode", inp=line + "\n")
+    t = (t or "").strip("\n")
+    if not t:
+        return
+    c = load()
+    c["pins"] = [t] + [p for p in c["pins"] if p != t]
+    c["pins"] = c["pins"][:20]
+    save(c)
+
+
+def cmd_unpin(t):
+    c = load()
+    c["pins"] = [p for p in c["pins"] if p != t]
+    save(c)
+
+
+def cmd_watch():
+    """the watchers that write every copy into the history (only one pair, ever)"""
+    if not load()["enabled"] or not have("cliphist") or not have("wl-paste"):
+        return
+    m = str(load()["max"])
+    for typ in ("text", "image"):
+        code, out = run(["pgrep", "-f", "wl-paste --type %s --watch cliphist" % typ])
+        if out.strip():
+            continue
+        subprocess.Popen(["wl-paste", "--type", typ, "--watch", "cliphist", "-max-items", m, "store"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def cmd_unwatch():
+    run(["pkill", "-f", "wl-paste --type text --watch cliphist"])
+    run(["pkill", "-f", "wl-paste --type image --watch cliphist"])
+
+
+def cmd_open(how):
+    os.makedirs(CACHE, exist_ok=True)
+    cmd_watch()
+    open(CACHE + "/clip-open", "w").write("%.4f %s\n" % (time.time(), how))
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else "toggle"
+    if cmd in ("open", "toggle", "close"):
+        cmd_open(cmd)
+    elif cmd == "list":
+        cmd_list(int(a[2]) if len(a) > 2 and a[2].isdigit() else 60)
+    elif cmd == "copy" and len(a) > 2:
+        cmd_copy(a[2])
+    elif cmd == "copy-text" and len(a) > 2:
+        cmd_copy_text(a[2])
+    elif cmd == "delete" and len(a) > 2:
+        cmd_delete(a[2])
+    elif cmd == "pin" and len(a) > 2:
+        cmd_pin(a[2])
+    elif cmd == "unpin" and len(a) > 2:
+        cmd_unpin(a[2])
+    elif cmd == "wipe":
+        cliphist("wipe")
+        shutil.rmtree(THUMBS, ignore_errors=True)
+    elif cmd == "watch":
+        cmd_watch()
+    elif cmd == "state":
+        c = load()
+        c.update({"cliphist": have("cliphist"), "wlpaste": have("wl-paste"), "wtype": have("wtype")})
+        print(json.dumps(c))
+    elif cmd == "set" and len(a) > 3:
+        c = load()
+        k, v = a[2], a[3]
+        if k in ("enabled", "paste", "images"):
+            c[k] = v in ("on", "true", "1", "yes")
+        elif k == "max":
+            try:
+                c[k] = max(50, min(1000, int(v)))
+            except ValueError:
+                sys.exit("max: a number from 50 to 1000")
+        else:
+            sys.exit(__doc__)
+        save(c)
+        if k in ("enabled", "max"):
+            cmd_unwatch()
+            cmd_watch()
+    else:
+        sys.exit(__doc__)
+
+
+main(sys.argv)

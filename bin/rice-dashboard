@@ -1,0 +1,631 @@
+#!/usr/bin/env python3
+"""rice-dashboard: what is left of the dashboard (V3.38: it is gone, the bar's island took its place).
+  The open and wallpaper commands go to the island, the control center and the wallpaper picker.
+
+  rice-dashboard config                 settings as JSON (with bar position and theme accent)
+  rice-dashboard set KEY VALUE          change a setting
+  rice-dashboard tabs a,b,c             tabs and their order (dashboard control tasks wallpaper performance about)
+  rice-dashboard open [TAB] [--edit]    open it (toggle when it is already open on that tab); --edit: edit mode
+                                        V3.34: without the classic dashboard (the default) it opens the bar's
+                                        island instead: today (calendar, weather) or system; control: the
+                                        control center; wallpaper: the wallpaper picker
+  rice-dashboard island [today|system|about]  open the island's card (toggle)
+  rice-dashboard layout TAB JSON        cards of a tab: [{"id": "cpu", "w": 5, "h": 1}, ...]
+  rice-dashboard reset-layout TAB       back to the default cards
+  rice-dashboard blur                   write the blur rule for Hyprland (rice-dashboard.lua)
+  rice-dashboard wallpaper              SUPER + W: Wallpaper tab, or the old picker when the dashboard is off
+  rice-dashboard stats                  performance numbers, one JSON line every 1.5 s
+  rice-dashboard about                  system information as JSON
+  rice-dashboard walls                  all wallpapers (with thumbnails) as JSON
+  rice-dashboard wall PATH              set a wallpaper (colors follow)
+"""
+import fcntl
+import glob
+import json
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/dashboard.json"
+CACHE = HOME + "/.cache/rice"
+OPEN = CACHE + "/dashboard-open"
+BIN = HOME + "/.local/bin"
+THUMBS = HOME + "/.cache/quickshell/thumbs"
+MY_THUMBS = CACHE + "/thumbs"
+WALL_CURRENT = HOME + "/.cache/hyprquickpaper-current"
+WAYBAR = HOME + "/.config/waybar"
+
+TABS = ["dashboard", "control", "tasks", "wallpaper", "performance", "about"]
+OLD_TABS = ["dashboard", "wallpaper", "performance", "about"]   # the tabs before Control and Tasks came
+TABS_V = 3
+# cards of the new Dashboard tab: when the config is from before them, a saved layout without any of them is dropped (once)
+HOME_NEW = ("hero", "quick", "now", "week", "pulse", "tasks")
+DEFAULTS = {
+    "enabled": True, "position": "bottom", "hover": False, "edge": True, "wallpaper_key": True, "style": "shadow",
+    "width": 1000, "scale": 1.0, "delay": 150, "trigger": 320, "close_on_leave": True, "speed": 1.0,
+    "tabs": list(TABS), "default_tab": "dashboard", "blur": True, "opacity": 0.9, "animation": "slide",
+    "hotspot": "bar", "attach": True, "layouts": {}, "classic": False,
+}
+INTS = {"width": (760, 1500), "delay": (0, 900), "trigger": (80, 900)}
+FLOATS = {"scale": (0.75, 1.4), "speed": (0.5, 2.0), "opacity": (0.35, 1.0)}
+CHOICES = {"position": ["bottom", "top", "left", "right"], "style": ["shadow", "graphite", "aurora", "frost"], "default_tab": TABS,
+           "animation": ["slide", "fade", "none"], "hotspot": ["bar", "edge"]}
+OLD_STYLES = {"darkshadow": "shadow", "end4": "frost", "caelestia": "aurora"}
+BOOLS = ("enabled", "hover", "edge", "wallpaper_key", "close_on_leave", "blur", "attach", "classic")
+HYPR = HOME + "/.config/hypr"
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def load():
+    c = json.loads(json.dumps(DEFAULTS))
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        raw = {}
+    for k, d in DEFAULTS.items():
+        v = raw.get(k, d)
+        if k == "style":
+            v = OLD_STYLES.get(v, v)
+        if k == "animation" and v == "morph":
+            v = "slide"
+        try:
+            if k == "layouts":
+                c[k] = clean_layouts(v, raw.get("tabs_v") != TABS_V)
+            elif k in BOOLS:
+                c[k] = v is True
+            elif k in CHOICES:
+                c[k] = v if v in CHOICES[k] else d
+            elif k in INTS:
+                c[k] = int(clamp(float(v), *INTS[k]))
+            elif k in FLOATS:
+                c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+            elif k == "tabs":
+                t = [x for x in v if x in TABS] if isinstance(v, list) else d
+                c[k] = t or list(TABS)
+        except Exception:
+            c[k] = d
+    # a config from before Control and Tasks: switch the new tabs on once (after that your choice stays)
+    if raw.get("tabs") == OLD_TABS and raw.get("tabs_v") != TABS_V:
+        c["tabs"] = list(TABS)
+    c["tabs_v"] = TABS_V
+    return c
+
+
+def clean_layouts(v, migrate=False):
+    out = {}
+    if not isinstance(v, dict):
+        return out
+    for tab, lst in v.items():
+        # a tab, or the layout of the tall panel at the side edges ("dashboard-side")
+        if (tab not in TABS and not (tab.endswith("-side") and tab[:-5] in TABS)) or not isinstance(lst, list):
+            continue
+        if migrate and tab in ("dashboard", "dashboard-side") and not any(isinstance(i, dict) and i.get("id") in HOME_NEW for i in lst):
+            continue
+        # V3.21: the Control tab got a Settings card; an older saved Control layout goes back to the default once
+        if migrate and tab in ("control", "control-side") and not any(isinstance(i, dict) and i.get("id") == "settings" for i in lst):
+            continue
+        items = []
+        for it in lst:
+            try:
+                o = {"id": str(it["id"])[:40], "w": int(clamp(int(it["w"]), 1, 12)), "h": int(clamp(int(it["h"]), 1, 8))}
+                if "x" in it and "y" in it:   # a place on the grid (edit mode); without one the card is packed
+                    o["x"] = int(clamp(int(it["x"]), 0, 11))
+                    o["y"] = int(clamp(int(it["y"]), 0, 7))
+                items.append(o)
+            except Exception:
+                pass
+        out[tab] = items[:24]
+    return out
+
+
+def write_blur(c):
+    """blur behind the dashboard is a Hyprland layer rule in rice-dashboard.lua (Settings > Dashboard > Blur)"""
+    lua, main = HYPR + "/rice-dashboard.lua", HYPR + "/hyprland.lua"
+    text = "-- generated by rice-dashboard (Settings > Dashboard)\n"
+    if c["blur"]:
+        text += ('pcall(hl.layer_rule, { name = "rice-dashboard-blur", match = { namespace = "rice-dashboard" },'
+                 ' blur = true, ignore_alpha = 0.2 })\n')
+    os.makedirs(HYPR, exist_ok=True)
+    old = read(lua)
+    open(lua, "w").write(text)
+    try:
+        s = open(main).read()
+        if 'require("rice-dashboard")' not in s:
+            if not os.path.exists(main + ".bak-dashboard"):
+                open(main + ".bak-dashboard", "w").write(s)
+            open(main, "w").write(s.rstrip("\n") + '\nrequire("rice-dashboard")\n')
+            old = None
+    except FileNotFoundError:
+        return
+    if old != text.strip() and os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        try:
+            subprocess.run([os.path.expanduser("~/.local/bin/rice-wm"), "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        except Exception:
+            pass
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"), indent=2)
+    os.replace(tmp, CFG)
+
+
+def read(p, d=""):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return d
+
+
+def sh(cmd, timeout=4):
+    if not shutil.which(cmd[0]):
+        return ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def accent():
+    m = re.search(r"@define-color\s+accent\s+(#[0-9a-fA-F]{6})", read(WAYBAR + "/colors.css"))
+    return m.group(1) if m else "#9ec9bd"
+
+
+def bar():
+    """where Waybar is and how tall, so the dashboard opens just under (or over) it"""
+    pos, h = "top", 34
+    try:
+        s = read(WAYBAR + "/config.jsonc")
+        s = re.sub(r"^\s*//.*$", "", s, flags=re.M)
+        c = json.loads(s)
+        pos = c.get("position", "top")
+        h = int(c.get("height", 34) or 34)
+    except Exception:
+        pass
+    pad, extra, auto = 4, 0, False
+    try:
+        u = json.load(open(WAYBAR + "/ui.json"))
+        if u.get("height") is not None:
+            pad = int(u["height"])
+        extra = {"floating": 12, "islands": 8, "island": 12}.get(u.get("style"), 0)
+        auto = u.get("autohide") is True
+    except Exception:
+        pass
+    # its color, so a dashboard that grows out of it can match
+    rgb, alpha = [13, 13, 13], 0.9
+    m = re.search(r"window#waybar\s*\{[^}]*?background:\s*rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", read(WAYBAR + "/style.css"), re.S)
+    if m:
+        rgb = [int(x) for x in m.groups()]
+    try:
+        alpha = float(json.load(open(WAYBAR + "/ui.json")).get("alpha", 0.9))
+    except Exception:
+        pass
+    return {"position": pos if pos in ("top", "bottom") else "top", "height": h + 2 * pad + extra, "autohide": auto,
+            "rgb": rgb, "alpha": round(alpha, 2)}
+
+
+def ensure_shell():
+    try:
+        subprocess.Popen([BIN + "/rice-desktop", "ensure"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except Exception:
+        pass
+
+
+def bar_on():
+    """the DarkShadow bar (the island lives in it) is on"""
+    try:
+        return json.load(open(DIR + "/bar.json")).get("enabled", True) is not False
+    except Exception:
+        return True
+
+
+def classic(c=None):
+    """V3.38: the dashboard is gone (the bar's island took its place); this script keeps its data for the island,
+    the wallpaper picker and Settings (stats, about, walls, wall) and sends the old keys where things live now"""
+    return False
+
+
+def island(tab, toggle=True):
+    os.makedirs(CACHE, exist_ok=True)
+    open(CACHE + "/island-open", "w").write("%f %s %s\n" % (time.time(), tab if tab in ("today", "system", "about") else "today",
+                                                             "toggle" if toggle else "open"))
+    ensure_shell()
+
+
+def walls_picker():
+    os.makedirs(CACHE, exist_ok=True)
+    open(CACHE + "/walls-open", "w").write("%f toggle\n" % time.time())
+    ensure_shell()
+
+
+def open_tab(tab, toggle=True, edit=False):
+    if not classic():
+        # the dashboard's parts live elsewhere now
+        if tab == "control":
+            subprocess.Popen([BIN + "/rice-cc", "open"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        elif tab == "wallpaper":
+            walls_picker()
+        else:
+            island("system" if tab == "performance" else ("about" if tab == "about" else "today"), toggle)
+        return
+    os.makedirs(CACHE, exist_ok=True)
+    tab = tab if tab in TABS else ""
+    open(OPEN, "w").write("%f %s %s %s\n" % (time.time(), tab or "-", "toggle" if toggle else "open", "edit" if edit else "-"))
+    ensure_shell()
+
+
+# ---------------- performance ----------------
+def cpu_name():
+    for line in open("/proc/cpuinfo"):
+        if line.startswith("model name"):
+            n = line.split(":", 1)[1].strip()
+            return re.sub(r"\s+", " ", re.sub(r"\((R|TM)\)|CPU|Processor|\d+-Core", "", n)).strip()
+    return platform.processor() or "CPU"
+
+
+def hwmon(names):
+    """first temperature (C) from a hwmon chip with one of these names"""
+    for d in glob.glob("/sys/class/hwmon/hwmon*"):
+        if read(d + "/name") in names:
+            best = None
+            for f in sorted(glob.glob(d + "/temp*_input")):
+                lab = read(f.replace("_input", "_label")).lower()
+                try:
+                    v = int(read(f)) / 1000
+                except ValueError:
+                    continue
+                if best is None or lab in ("tctl", "tdie", "package id 0", "edge", "junction"):
+                    best = v
+                    if lab in ("tctl", "tdie", "package id 0", "edge"):
+                        break
+            if best is not None:
+                return round(best)
+    return None
+
+
+def cpu_temp():
+    t = hwmon(("k10temp", "zenpower", "coretemp", "cpu_thermal", "acpitz"))
+    if t is None:
+        for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+            if read(z + "/type") in ("x86_pkg_temp", "cpu-thermal", "TCPU"):
+                try:
+                    return round(int(read(z + "/temp")) / 1000)
+                except ValueError:
+                    pass
+    return t
+
+
+def gpu_info():
+    out = {"name": "", "usage": None, "temp": None, "mem_used": None, "mem_total": None}
+    if shutil.which("nvidia-smi"):
+        s = sh(["nvidia-smi", "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
+                "--format=csv,noheader,nounits"], 3).split("\n")[0]
+        p = [x.strip() for x in s.split(",")]
+        if len(p) >= 5:
+            out.update(name=p[0].replace("NVIDIA ", ""), usage=int(float(p[1])), temp=int(float(p[2])),
+                       mem_used=int(float(p[3])), mem_total=int(float(p[4])))
+            return out
+    for card in sorted(glob.glob("/sys/class/drm/card[0-9]")):
+        dev = card + "/device"
+        busy = read(dev + "/gpu_busy_percent")
+        if busy:
+            out["usage"] = int(busy)
+            for h in glob.glob(dev + "/hwmon/hwmon*/temp1_input"):
+                try:
+                    out["temp"] = round(int(read(h)) / 1000)
+                except ValueError:
+                    pass
+            try:
+                out["mem_used"] = int(read(dev + "/mem_info_vram_used")) // 1048576
+                out["mem_total"] = int(read(dev + "/mem_info_vram_total")) // 1048576
+            except ValueError:
+                pass
+            break
+    out["name"] = gpu_name()
+    return out
+
+
+_gpu_name = []
+
+
+def gpu_name():
+    if _gpu_name:
+        return _gpu_name[0]
+    n = ""
+    if shutil.which("lspci"):
+        for line in sh(["lspci"], 3).splitlines():
+            if re.search(r"VGA|3D controller|Display controller", line):
+                n = line.split(":", 2)[-1].strip()
+                n = re.sub(r"Corporation|Advanced Micro Devices, Inc\.|\[AMD/ATI\]|\(rev .*\)", "", n)
+                m = re.search(r"\[([^\]]+)\]", n)
+                n = (m.group(1) if m else n).strip()
+                if "nvidia" in line.lower() or "amd" in line.lower() or "radeon" in line.lower():
+                    break
+    _gpu_name.append(n or "Graphics")
+    return _gpu_name[0]
+
+
+def mem():
+    m = {}
+    for ln in open("/proc/meminfo"):
+        k, v = ln.split(":")
+        m[k] = int(v.split()[0]) * 1024
+    t = m.get("MemTotal", 1)
+    used = t - m.get("MemAvailable", 0)
+    return {"used": used, "total": t, "pct": round(100 * used / t), "swap_used": m.get("SwapTotal", 0) - m.get("SwapFree", 0),
+            "swap_total": m.get("SwapTotal", 0)}
+
+
+def disks():
+    out, seen = [], set()
+    for line in read("/proc/mounts").splitlines():
+        p = line.split()
+        if len(p) < 3 or not p[0].startswith("/dev/") or p[2] in ("squashfs", "iso9660") or "/loop" in p[0]:
+            continue
+        dev = os.path.realpath(p[0])
+        if dev in seen or p[1].startswith(("/boot", "/efi", "/nix/store", "/snap")):
+            continue
+        try:
+            st = os.statvfs(p[1])
+        except OSError:
+            continue
+        total = st.f_blocks * st.f_frsize
+        if total < 1 << 30:
+            continue
+        seen.add(dev)
+        used = total - st.f_bfree * st.f_frsize
+        out.append({"dev": os.path.basename(re.sub(r"p?\d+$", "", dev)) if "nvme" not in dev else os.path.basename(re.sub(r"p\d+$", "", dev)),
+                    "part": os.path.basename(dev), "mount": p[1], "used": used, "total": total, "pct": round(100 * used / total)})
+    out.sort(key=lambda d: d["mount"] != "/")
+    return out[:6]
+
+
+def net_totals():
+    rx = tx = 0
+    best, best_n = "", -1
+    for line in read("/proc/net/dev").splitlines()[2:]:
+        name, data = line.split(":", 1)
+        name = name.strip()
+        if name == "lo" or name.startswith(("veth", "docker", "br-", "virbr")):
+            continue
+        v = data.split()
+        r, t = int(v[0]), int(v[8])
+        rx += r
+        tx += t
+        if r + t > best_n:
+            best, best_n = name, r + t
+    return rx, tx, best
+
+
+def cpu_times():
+    v = [int(x) for x in open("/proc/stat").readline().split()[1:]]
+    return v[3] + v[4], sum(v)
+
+
+def battery():
+    try:
+        return json.loads(subprocess.run([BIN + "/rice-battery"], capture_output=True, text=True, timeout=5).stdout)
+    except Exception:
+        return {"main": None, "devices": []}
+
+
+def stats():
+    name = cpu_name()
+    idle0, tot0 = cpu_times()
+    rx0, tx0, _ = net_totals()
+    t0 = time.time()
+    n = 0
+    bat = battery()
+    while True:
+        time.sleep(1.5)
+        idle1, tot1 = cpu_times()
+        rx1, tx1, iface = net_totals()
+        t1 = time.time()
+        dt = tot1 - tot0
+        usage = round(100 * (1 - (idle1 - idle0) / dt)) if dt > 0 else 0
+        el = max(0.1, t1 - t0)
+        if n % 20 == 19:
+            bat = battery()
+        out = {
+            "cpu": {"name": name, "usage": clamp(usage, 0, 100), "temp": cpu_temp(), "cores": os.cpu_count()},
+            "gpu": gpu_info(), "mem": mem(), "disks": disks() if n % 10 == 0 or n < 2 else None,
+            "net": {"rx": max(0, (rx1 - rx0) / el), "tx": max(0, (tx1 - tx0) / el), "rx_total": rx1, "tx_total": tx1, "iface": iface},
+            "battery": bat, "uptime": float(read("/proc/uptime", "0").split()[0]),
+        }
+        idle0, tot0, rx0, tx0, t0 = idle1, tot1, rx1, tx1, t1
+        n += 1
+        try:
+            sys.stdout.write(json.dumps(out) + "\n")
+            sys.stdout.flush()
+        except BrokenPipeError:
+            return
+
+
+# ---------------- about ----------------
+def os_release():
+    d = {}
+    for line in read("/etc/os-release").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            d[k] = v.strip().strip('"')
+    return d
+
+
+def packages(distro_id):
+    if shutil.which("pacman"):
+        n = sh(["pacman", "-Qq"], 6)
+        return "%d (pacman)" % len(n.splitlines()) if n else ""
+    if shutil.which("xbps-query"):
+        n = sh(["xbps-query", "-l"], 6)
+        return "%d (xbps)" % len(n.splitlines()) if n else ""
+    if os.path.isdir("/run/current-system/sw"):
+        n = sh(["nix-store", "-qR", "/run/current-system/sw"], 10)
+        user = sh(["nix-store", "-qR", HOME + "/.nix-profile"], 10) if os.path.exists(HOME + "/.nix-profile") else ""
+        cnt = len(set(n.splitlines()) | set(user.splitlines()))
+        return "%d (nix)" % cnt if cnt else ""
+    if shutil.which("dpkg-query"):
+        n = sh(["dpkg-query", "-f", ".\n", "-W"], 6)
+        return "%d (dpkg)" % len(n.splitlines()) if n else ""
+    if shutil.which("rpm"):
+        n = sh(["rpm", "-qa"], 8)
+        return "%d (rpm)" % len(n.splitlines()) if n else ""
+    return ""
+
+
+def about():
+    o = os_release()
+    dmi = "/sys/class/dmi/id/"
+    vendor = read(dmi + "board_vendor")
+    board = " ".join(x for x in (vendor, read(dmi + "board_name")) if x and "To be filled" not in x)
+    product = " ".join(x for x in (read(dmi + "sys_vendor"), read(dmi + "product_name")) if x and "To be filled" not in x)
+    mons = []
+    wmb = os.path.expanduser("~/.local/bin/rice-wm")       # Hyprland or niri
+    try:
+        for m in json.loads(sh([wmb, "monitors"], 4) or "[]"):
+            mons.append("%dx%d @ %dHz" % (m.get("pw") or m["width"], m.get("ph") or m["height"], round(m.get("rate", 60))))
+    except Exception:
+        pass
+    wm = sh([wmb, "version"], 4).strip()
+    shell = os.path.basename(os.environ.get("SHELL", "")) or "sh"
+    m = mem()
+    root = next((d for d in disks() if d["mount"] == "/"), None)
+    up = float(read("/proc/uptime", "0").split()[0])
+    print(json.dumps({
+        "distro": {"name": o.get("NAME", "Linux"), "pretty": o.get("PRETTY_NAME", o.get("NAME", "Linux")),
+                   "id": o.get("ID", "linux"), "like": o.get("ID_LIKE", ""), "version": o.get("VERSION", o.get("BUILD_ID", "")),
+                   "url": o.get("HOME_URL", ""), "docs": o.get("DOCUMENTATION_URL", ""), "support": o.get("SUPPORT_URL", "")},
+        "user": os.environ.get("USER", ""), "host": platform.node(),
+        "board": board, "product": product, "bios": read(dmi + "bios_version"),
+        "cpu": cpu_name(), "cores": os.cpu_count(), "gpu": gpu_name(),
+        "memory": m["total"], "kernel": platform.release(), "arch": platform.machine(),
+        "wm": wm or "Hyprland", "shell": shell, "terminal": (read(os.path.expanduser("~/.config/rice/terminal"), "") or "").strip() or os.environ.get("TERMINAL", "kitty"),
+        "display": ", ".join(mons), "packages": packages(o.get("ID", "")),
+        "disk": root, "uptime": up, "rice": read(DIR + "/version", ""),
+        "quickshell": sh(["qs", "--version"], 3).split("\n")[0],
+    }))
+
+
+# ---------------- wallpapers ----------------
+def wall_dir():
+    for d in (os.environ.get("WALLPAPER_DIR", ""), HOME + "/Pictures/Wallpapers", HOME + "/Wallpapers", HOME + "/Pictures"):
+        if d and os.path.isdir(d):
+            return d
+    return ""
+
+
+def walls():
+    # all your folders (yours, Waypaper's), live wallpapers and the thumbnails: rice-walls
+    os.execv(BIN + "/rice-walls", [BIN + "/rice-walls", "list"])
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else ""
+    if cmd == "config":
+        c = load()
+        c["bar"] = bar()
+        # until you pick your own, the dashboard is as see-through as the bar
+        try:
+            if "opacity" not in json.load(open(CFG)):
+                c["opacity"] = round(clamp(c["bar"]["alpha"], 0.55, 1.0), 2)
+        except Exception:
+            c["opacity"] = round(clamp(c["bar"]["alpha"], 0.55, 1.0), 2)
+        c["accent"] = accent()
+        # the classic dashboard only runs when it is chosen (or the bar is Waybar)
+        if not classic(c):
+            c["enabled"] = False
+        # rice-effects: no blur and no transparency (Lite or gaming mode); gaming mode also keeps the
+        # bottom edge free (unless Settings > Services > Gaming mode says otherwise)
+        try:
+            eff = json.load(open(DIR + "/effects.json"))
+        except Exception:
+            eff = {}
+        if os.path.exists(HOME + "/.cache/rice/flat"):
+            c["opacity"] = 1.0
+            c["blur"] = False
+            c["flat"] = True
+        if os.path.exists(DIR + "/gaming-on") and eff.get("edge") is not True:
+            c["edge"] = False
+        print(json.dumps(c))
+    elif cmd == "set" and len(a) > 3:
+        os.makedirs(DIR, exist_ok=True)
+        lk = open(DIR + "/.dashboard.lock", "w")
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        c = load()
+        k, v = a[2], a[3]
+        if k not in DEFAULTS or k in ("tabs", "layouts"):
+            sys.exit("unknown key: " + k)
+        if k in BOOLS:
+            c[k] = v.lower() in ("1", "true", "on", "yes")
+        elif k in CHOICES:
+            if v not in CHOICES[k]:
+                sys.exit("%s: %s" % (k, "|".join(CHOICES[k])))
+            c[k] = v
+        elif k in INTS:
+            c[k] = int(clamp(float(v), *INTS[k]))
+        else:
+            c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+        save(c)
+        if k == "blur":
+            write_blur(c)
+        ensure_shell()
+    elif cmd == "blur":
+        write_blur(load())
+    elif cmd == "layout" and len(a) > 3:
+        c = load()
+        try:
+            lay = clean_layouts({a[2]: json.loads(a[3])})
+        except ValueError:
+            sys.exit("layout: bad JSON")
+        c["layouts"].update(lay)
+        save(c)
+    elif cmd == "reset-layout" and len(a) > 2:
+        c = load()
+        c["layouts"].pop(a[2], None)
+        save(c)
+    elif cmd == "tabs" and len(a) > 2:
+        c = load()
+        t = [x for x in a[2].split(",") if x in TABS]
+        c["tabs"] = list(dict.fromkeys(t)) or list(TABS)
+        if c["default_tab"] not in c["tabs"]:
+            c["default_tab"] = c["tabs"][0]
+        save(c)
+    elif cmd == "open":
+        args = [x for x in a[2:] if not x.startswith("--")]
+        open_tab(args[0] if args else "", toggle="--no-toggle" not in a and "--edit" not in a, edit="--edit" in a)
+    elif cmd == "wallpaper":
+        c = load()
+        if not classic(c):
+            walls_picker()
+        elif c["enabled"] and c["wallpaper_key"] and "wallpaper" in c["tabs"]:
+            open_tab("wallpaper")
+        else:
+            os.execv(BIN + "/rice-wallpaper", [BIN + "/rice-wallpaper"])
+    elif cmd == "island":
+        island(a[2] if len(a) > 2 else "today")
+    elif cmd == "stats":
+        stats()
+    elif cmd == "about":
+        about()
+    elif cmd == "walls":
+        walls()
+    elif cmd == "wall" and len(a) > 2:
+        subprocess.Popen([BIN + "/rice-hotcorner", "wall", a[2]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

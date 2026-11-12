@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""rice-taskview: the Task view of DarkShadow's Shell (TaskView.qml): every workspace with its windows, and the
+Alt + Tab window switcher.
+
+  rice-taskview overview          open / close the Task view (SUPER + Tab)
+  rice-taskview switch | back     the window switcher: next / previous window (ALT + Tab, ALT + SHIFT + Tab)
+  rice-taskview commit            go to the window picked in the switcher (Hyprland: letting go of ALT)
+  rice-taskview data              JSON: the screen, the workspaces and the windows (where they are, 0..1)
+  rice-taskview focus ID | close ID | move ID WS | ws N
+  rice-taskview get               JSON: the settings (~/.config/rice/taskview.json)
+  rice-taskview set KEY VALUE     live on|off, count 5|10, super on|off (SUPER alone opens it, Hyprland)
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CACHE = HOME + "/.cache/rice"
+CONF = HOME + "/.config/rice/taskview.json"
+DEF = {"live": True, "count": 10, "super": False, "empty": True}
+
+
+def niri():
+    return bool(os.environ.get("NIRI_SOCKET"))
+
+
+def run(cmd, timeout=4):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def js(cmd):
+    try:
+        return json.loads(run(cmd) or "null")
+    except ValueError:
+        return None
+
+
+def cfg():
+    c = dict(DEF)
+    try:
+        c.update(json.load(open(CONF)))
+    except (OSError, ValueError):
+        pass
+    return c
+
+
+def put(c):
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    json.dump(c, open(CONF, "w"), indent=1)
+
+
+def tell(mode):
+    os.makedirs(CACHE, exist_ok=True)
+    with open(CACHE + "/taskview-open", "w") as f:
+        f.write("%f %s\n" % (time.time(), mode))
+
+
+def data_hypr():
+    mons = js(["hyprctl", "-j", "monitors"]) or []
+    mon = next((m for m in mons if m.get("focused")), mons[0] if mons else {})
+    mw, mh = max(1, mon.get("width", 1920)), max(1, mon.get("height", 1080))
+    sc = mon.get("scale", 1) or 1
+    lw, lh = mw / sc, mh / sc
+    if mon.get("transform", 0) in (1, 3, 5, 7):
+        lw, lh = lh, lw
+    mx, my = mon.get("x", 0), mon.get("y", 0)
+    act = (mon.get("activeWorkspace") or {}).get("id", 1)
+    wins = []
+    for c in js(["hyprctl", "-j", "clients"]) or []:
+        ws = (c.get("workspace") or {}).get("id", 0)
+        if ws <= 0 or not c.get("mapped", True) or c.get("hidden"):
+            continue
+        if c.get("monitor") not in (None, mon.get("id")):
+            # windows of another monitor: shown in their workspace, placed as if on this screen
+            pass
+        at, sz = c.get("at", [0, 0]), c.get("size", [100, 100])
+        wins.append({"id": c.get("address", ""), "ws": ws, "x": (at[0] - mx) / lw, "y": (at[1] - my) / lh,
+                     "w": sz[0] / lw, "h": sz[1] / lh, "cls": c.get("class", "") or c.get("initialClass", ""),
+                     "title": c.get("title", ""), "order": c.get("focusHistoryID", 99),
+                     "float": bool(c.get("floating")), "full": bool(c.get("fullscreen"))})
+    used = sorted({w["ws"] for w in wins})
+    return {"wm": "hyprland", "w": lw, "h": lh, "active": act, "used": used, "wins": wins}
+
+
+def ordkey(c):
+    """niri: the focused window first, then by the time it was last focused (newer niri tells it)"""
+    ts = c.get("focus_timestamp")
+    s = (ts.get("secs", 0) + ts.get("nanos", 0) / 1e9) if isinstance(ts, dict) else 0
+    return (0 if c.get("is_focused") else 1, -s, c.get("id", 0))
+
+
+def data_niri():
+    outs = js(["niri", "msg", "-j", "outputs"]) or {}
+    wss = js(["niri", "msg", "-j", "workspaces"]) or []
+    foc = next((w for w in wss if w.get("is_focused")), wss[0] if wss else {})
+    out = foc.get("output")
+    o = outs.get(out, {}) if isinstance(outs, dict) else {}
+    lg = o.get("logical") or {}
+    lw, lh = lg.get("width", 1920), lg.get("height", 1080)
+    mine = sorted([w for w in wss if w.get("output") == out], key=lambda w: w.get("idx", 0))
+    idx = {w["id"]: w.get("idx", 0) for w in mine}
+    wins = []
+    by_ws = {}
+    for c in js(["niri", "msg", "-j", "windows"]) or []:
+        if c.get("workspace_id") not in idx:
+            continue
+        by_ws.setdefault(c["workspace_id"], []).append(c)
+    for wid, lst in by_ws.items():
+        # the scrolling layout: columns side by side; each column's windows stacked. Squeezed to fit the card
+        cols = {}
+        for c in lst:
+            lay = c.get("layout") or {}
+            pos = lay.get("pos_in_scrolling_layout") or [len(cols) + 1, 1]
+            cols.setdefault(pos[0], []).append((pos[1] or 1, c, lay.get("tile_size") or [lw / 2, lh]))
+        total = sum(max(t[2][0] for t in col) for col in cols.values()) or lw
+        k = min(1.0, lw / total)
+        x = 0.0
+        for ci in sorted(cols):
+            col = sorted(cols[ci], key=lambda t: t[0])
+            cw = max(t[2][0] for t in col) * k
+            y = 0.0
+            for _, c, ts in col:
+                h = ts[1] * (k if len(col) > 1 else 1)
+                wins.append({"id": c["id"], "ws": idx[wid], "x": x / lw, "y": y / lh, "w": cw / lw, "h": min(1, h / lh),
+                             "cls": c.get("app_id", "") or "", "title": c.get("title", "") or "",
+                             "order": ordkey(c),
+                             "float": bool(c.get("is_floating")), "full": False})
+                y += h
+            x += cw
+    # niri: the order of last use is the focus time when niri tells it, else focused first
+    wins.sort(key=lambda w: w["order"])
+    for i, w in enumerate(wins):
+        w["order"] = i
+    used = sorted({w["ws"] for w in wins})
+    return {"wm": "niri", "w": lw, "h": lh, "active": foc.get("idx", 1), "used": used, "wins": wins}
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else "overview"
+    if cmd in ("overview", "toggle"):
+        tell("overview")
+    elif cmd in ("switch", "next"):
+        tell("switch")
+    elif cmd in ("back", "prev"):
+        tell("back")
+    elif cmd == "commit":
+        tell("commit")
+    elif cmd == "data":
+        d = data_niri() if niri() else data_hypr()
+        d["cfg"] = cfg()
+        print(json.dumps(d))
+    elif cmd == "focus" and len(a) > 2:
+        if niri():
+            run(["niri", "msg", "action", "focus-window", "--id", a[2]])
+        else:
+            run(["hyprctl", "dispatch", "focuswindow", "address:" + a[2]])
+    elif cmd == "close" and len(a) > 2:
+        if niri():
+            run(["niri", "msg", "action", "close-window", "--id", a[2]])
+        else:
+            run(["hyprctl", "dispatch", "closewindow", "address:" + a[2]])
+    elif cmd == "move" and len(a) > 3:
+        if niri():
+            run(["niri", "msg", "action", "move-window-to-workspace", "--window-id", a[2], "--focus", "false", a[3]])
+        else:
+            run(["hyprctl", "dispatch", "movetoworkspacesilent", "%s,address:%s" % (a[3], a[2])])
+    elif cmd == "ws" and len(a) > 2:
+        if niri():
+            run(["niri", "msg", "action", "focus-workspace", a[2]])
+        else:
+            run(["hyprctl", "dispatch", "workspace", a[2]])
+    elif cmd == "get":
+        print(json.dumps(cfg()))
+    elif cmd == "set" and len(a) > 3:
+        c = cfg()
+        k, v = a[2], a[3]
+        if k in ("live", "super", "empty"):
+            c[k] = v in ("on", "true", "1", "yes")
+        elif k == "count":
+            try:
+                c[k] = max(1, min(10, int(v)))
+            except ValueError:
+                pass
+        put(c)
+        if k == "super" and not niri() and shutil.which("hyprctl"):
+            run(["hyprctl", "eval", "if RiceTask then RiceTask.super(%s) end" % ("true" if c["super"] else "false")])
+    else:
+        sys.stderr.write(__doc__)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

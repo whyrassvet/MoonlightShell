@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# rice-fps on|off|state|now   FPS for the game bar from MangoHud's log (games started with `mangohud`,
+# or Steam launch option `mangohud %command%`). "on" adds a small block to ~/.config/MangoHud/MangoHud.conf that
+# makes MangoHud write one line per second to ~/.cache/rice/mangohud; "off" takes it out again.
+conf="$HOME/.config/MangoHud/MangoHud.conf"
+dir="$HOME/.cache/rice/mangohud"
+begin="# >>> DarkShadow game bar (rice-fps)"
+end="# <<< DarkShadow game bar"
+strip() { [ -f "$conf" ] && sed -i "/^$begin\$/,/^$end\$/d" "$conf"; }
+case "${1:-state}" in
+  on)
+    mkdir -p "$(dirname "$conf")" "$dir"
+    strip
+    printf '%s\noutput_folder=%s\nlog_interval=1000\nautostart_log=1\nlog_duration=0\n%s\n' "$begin" "$dir" "$end" >>"$conf"
+    echo "FPS for the game bar: on (start games with mangohud)" ;;
+  off) strip; echo "FPS for the game bar: off" ;;
+  state) grep -qxF "$begin" "$conf" 2>/dev/null && echo on || echo off ;;
+  now)
+    # the newest log, only while it is still being written
+    f="$(ls -t "$dir"/*.csv 2>/dev/null | head -1)"
+    [ -n "$f" ] || exit 0
+    age=$(( $(date +%s) - $(stat -c %Y "$f") ))
+    [ "$age" -lt 5 ] || exit 0
+    tail -n 1 "$f" | cut -d, -f1 | awk '{ if ($1 + 0 > 0) printf "%d\n", $1 + 0.5 }'
+    # keep the folder small: logs older than a day go
+    find "$dir" -name '*.csv' -mtime +1 -delete 2>/dev/null ;;
+  *) echo "usage: rice-fps on|off|state|now" >&2; exit 1 ;;
+esac

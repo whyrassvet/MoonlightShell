@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Volume, microphone and brightness keys (laptop Fn keys, headset +/- buttons).
+#   rice-media up|down|mute|mic|bright-up|bright-down
+# Uses swayosd (pretty on-screen bar) when it is running, otherwise wpctl/brightnessctl + a notification.
+set -u
+step=5
+osd() { command -v swayosd-client >/dev/null 2>&1 && pgrep -x swayosd-server >/dev/null 2>&1; }
+vol() { wpctl get-volume @DEFAULT_AUDIO_SINK@ 2>/dev/null | awk '{printf "%d", $2 * 100}'; }
+show() { # show TITLE VALUE ICON
+  command -v notify-send >/dev/null 2>&1 || return 0
+  notify-send -a rice-media -i "$3" -h "int:value:$2" -h string:x-canonical-private-synchronous:rice-media -t 1200 "$1" "$2%"
+}
+case "${1:-}" in
+  up)
+    if osd; then swayosd-client --output-volume raise; else
+      wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "${step}%+"; show "Volume" "$(vol)" audio-volume-high; fi ;;
+  down)
+    if osd; then swayosd-client --output-volume lower; else
+      wpctl set-volume @DEFAULT_AUDIO_SINK@ "${step}%-"; show "Volume" "$(vol)" audio-volume-low; fi ;;
+  mute)
+    if osd; then swayosd-client --output-volume mute-toggle; else
+      wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+      if wpctl get-volume @DEFAULT_AUDIO_SINK@ | grep -q MUTED; then show "Muted" 0 audio-volume-muted; else show "Volume" "$(vol)" audio-volume-high; fi; fi ;;
+  mic)
+    if osd; then swayosd-client --input-volume mute-toggle; else
+      wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+      if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q MUTED; then show "Microphone off" 0 microphone-sensitivity-muted; else show "Microphone on" 100 audio-input-microphone; fi; fi ;;
+  bright-up)
+    if osd; then swayosd-client --brightness raise; else
+      brightnessctl -q set 5%+; show "Brightness" "$(brightnessctl -m | cut -d, -f4 | tr -d %)" display-brightness; fi ;;
+  bright-down)
+    if osd; then swayosd-client --brightness lower; else
+      brightnessctl -q set 5%-; show "Brightness" "$(brightnessctl -m | cut -d, -f4 | tr -d %)" display-brightness; fi ;;
+  *) echo "usage: rice-media up|down|mute|mic|bright-up|bright-down" >&2; exit 1 ;;
+esac

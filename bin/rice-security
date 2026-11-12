@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""rice-security: Settings > Security. Virus scan (ClamAV), a quick check of the system, a watch on the shell's own
+files and a few hardening switches. Nothing here runs as root: the things that need root open a terminal with the
+command, so you see it and type your password yourself.
+
+  rice-security state                      JSON for the settings app (checks, ClamAV, quarantine, integrity)
+  rice-security scan quick|home|PATH [--notify]   scan with ClamAV; progress in ~/.cache/rice/security/progress.json
+  rice-security stop                       stop a running scan
+  rice-security quarantine                 move what the last scan found to the quarantine folder
+  rice-security restore NAME | delete NAME | delete-all     the quarantine folder
+  rice-security baseline                   trust the shell files as they are now
+  rice-security integrity                  JSON: which shell files changed since the baseline
+  rice-security hardening on|off|show      (prints the commands for the terminal) sysctl hardening
+  rice-security term CMD...                what the Install / Update buttons run
+  rice-security clear-logs                 remove Hyprland's log files
+  rice-security weekly on|off              a quick scan every week (a notification when something is found)
+"""
+import hashlib
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+CACHE = HOME + "/.cache/rice/security"
+PROG = CACHE + "/progress.json"
+LAST = CACHE + "/last-scan.json"
+QDIR = HOME + "/.local/share/rice/quarantine"
+BASE = HOME + "/.config/rice/integrity.json"
+SYSCTL = "/etc/sysctl.d/99-darkshadow-hardening.conf"
+# only settings that do not get in the way of normal use (gdb attach is the one thing that stops working)
+HARDEN = [("kernel.yama.ptrace_scope", "1"), ("kernel.kptr_restrict", "2"), ("fs.protected_symlinks", "1"),
+          ("fs.protected_hardlinks", "1"), ("fs.suid_dumpable", "0")]
+TIMER = "rice-security-scan"
+
+
+def run(cmd, timeout=8):
+    if not shutil.which(cmd[0]):
+        return ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return (r.stdout or "") + (r.stderr or "")
+    except Exception:
+        return ""
+
+
+def sysctl(key):
+    try:
+        return open("/proc/sys/" + key.replace(".", "/")).read().strip()
+    except Exception:
+        return None
+
+
+def distro():
+    try:
+        t = open("/etc/os-release").read().lower()
+    except Exception:
+        return ""
+    ids = " ".join(re.findall(r'^(?:id|id_like)=(.*)$', t, re.M)).replace('"', "")
+    return ids
+
+
+def install_cmd():
+    d = distro()
+    if "arch" in d:
+        return "sudo pacman -S --needed clamav && sudo freshclam"
+    if "void" in d.split():
+        return "sudo xbps-install -y clamav && sudo freshclam"
+    if "fedora" in d or "rhel" in d:
+        return "sudo dnf install clamav clamav-update && sudo freshclam"
+    if "debian" in d or "ubuntu" in d:
+        return "sudo apt install clamav && sudo freshclam"
+    if "suse" in d:
+        return "sudo zypper install clamav && sudo freshclam"
+    if "nixos" in d:
+        return "echo 'NixOS: add  services.clamav.scanner.enable = true;  and  services.clamav.updater.enable = true;  to your configuration.nix, then run: sudo nixos-rebuild switch'"
+    return "echo 'Install the clamav package with your package manager, then run: sudo freshclam'"
+
+
+def db_age_days():
+    best = 0
+    for d in ("/var/lib/clamav", "/var/db/clamav"):
+        try:
+            for f in os.listdir(d):
+                if f.endswith((".cvd", ".cld")):
+                    best = max(best, os.path.getmtime(os.path.join(d, f)))
+        except Exception:
+            pass
+    return None if not best else int((time.time() - best) / 86400)
+
+
+# ---------------------------------------------------------------- checks
+def listening():
+    out = run(["ss", "-tulnH"])
+    pub = []
+    for l in out.splitlines():
+        p = l.split()
+        if len(p) < 5:
+            continue
+        addr = p[4]
+        if addr.startswith(("127.", "[::1]", "::1")):
+            continue
+        port = addr.rsplit(":", 1)[-1]
+        pub.append(p[0] + "/" + port)
+    return sorted(set(pub))
+
+
+def checks():
+    C = []
+
+    def add(key, name, ok, text, fix=""):
+        C.append({"key": key, "name": name, "ok": ok, "text": text, "fix": fix})
+    fw = None
+    for unit in ("ufw", "firewalld", "nftables", "iptables"):
+        if run(["systemctl", "is-active", unit]).strip() == "active":
+            fw = unit
+            break
+    add("firewall", "Firewall", fw is not None, "On (%s)" % fw if fw else "No firewall service is running",
+        "" if fw else "sudo ufw enable   (or: sudo systemctl enable --now firewalld)")
+    ports = listening()
+    ssh = run(["systemctl", "is-active", "sshd"]).strip() == "active" or run(["systemctl", "is-active", "ssh"]).strip() == "active"
+    add("ssh", "SSH server", not ssh, "Off" if not ssh else "On: other computers can log in to this one",
+        "" if not ssh else "sudo systemctl disable --now sshd")
+    add("ports", "Open to the network", len(ports) <= 3, "Nothing listens to the network" if not ports else
+        ("%d: %s" % (len(ports), ", ".join(ports[:6]) + (" ..." if len(ports) > 6 else ""))))
+    pt = sysctl("kernel.yama.ptrace_scope")
+    add("ptrace", "Programs spying on programs", pt not in (None, "0"), "Restricted" if pt not in (None, "0") else "Any of your programs can read another one's memory (see Experimental below)")
+    enc = "crypt" in run(["lsblk", "-no", "TYPE"])
+    add("disk", "Disk encryption", enc, "Your disk is encrypted" if enc else "Anyone who holds this computer can read your files (matters most for laptops)")
+    idle = any(run(["pgrep", "-x", n]).strip() for n in ("hypridle", "swayidle"))
+    add("lock", "Lock when you are away", idle, "The screen locks when you are idle" if idle else "Nothing locks the screen when you leave (Settings > Desktop > Idle & Lockscreen)")
+    try:
+        need = not os.path.isdir("/usr/lib/modules/" + os.uname().release) and not os.path.isdir("/lib/modules/" + os.uname().release) and os.path.isdir("/usr/lib/modules")
+    except Exception:
+        need = False
+    add("reboot", "Restart after updates", not need, "Up to date" if not need else "The kernel was updated: restart to use it (and its fixes)")
+    # PATH folders anybody can write to
+    bad = []
+    for d in os.environ.get("PATH", "").split(":"):
+        try:
+            if d and os.path.isdir(d) and os.stat(d).st_mode & 0o002:
+                bad.append(d)
+        except Exception:
+            pass
+    add("pathw", "Folders in PATH", not bad, "Only you and root can write there" if not bad else "Everybody can write to: " + ", ".join(bad))
+    # things that start by themselves and are not the shell's
+    odd = []
+    ad = HOME + "/.config/autostart"
+    if os.path.isdir(ad):
+        for f in sorted(os.listdir(ad)):
+            if f.endswith(".desktop") and "rice" not in f.lower():
+                odd.append(f)
+    su = HOME + "/.config/systemd/user"
+    if os.path.isdir(su):
+        for f in sorted(os.listdir(su)):
+            if f.endswith((".service", ".timer")) and not f.startswith("rice") and not os.path.islink(os.path.join(su, f)):
+                odd.append(f)
+    add("autostart", "Starts by itself", len(odd) == 0, "Only things you know about" if not odd else "Look at these: " + ", ".join(odd[:6]),
+        "")
+    cron = run(["crontab", "-l"])
+    jobs = [l for l in cron.splitlines() if l.strip() and not l.startswith("#") and "no crontab" not in l]
+    add("cron", "Scheduled jobs (cron)", not jobs, "None" if not jobs else "%d job(s): check them with  crontab -l" % len(jobs))
+    # shell files owned by somebody else or writable by others
+    loose = []
+    for root in (HOME + "/.local/bin", HOME + "/.config/quickshell", HOME + "/.config/rice"):
+        for dp, dn, fn in os.walk(root):
+            for f in fn:
+                p = os.path.join(dp, f)
+                try:
+                    st = os.lstat(p)
+                except Exception:
+                    continue
+                if st.st_uid != os.getuid() or (st.st_mode & 0o002 and not os.path.islink(p)):
+                    loose.append(p)
+            if len(loose) > 20:
+                break
+    add("own", "Shell files", not loose, "Owned by you, nobody else can change them" if not loose else "%d file(s) are owned by someone else or open to everybody (first: %s)" % (len(loose), loose[0]))
+    return C
+
+
+# ---------------------------------------------------------------- integrity
+def watched():
+    out = []
+    for root, pat in ((HOME + "/.local/bin", re.compile(r"^(rice-|hypr-set|desktop-set|wifi-menu|bt-menu|reload|wallpaper)")),
+                      (HOME + "/.config/quickshell", None), (HOME + "/.config/hypr", re.compile(r"\.lua$")),
+                      (HOME + "/.config/niri", re.compile(r"\.kdl$"))):
+        for dp, dn, fn in os.walk(root):
+            for f in fn:
+                if pat and root.endswith("bin") and not pat.search(f):
+                    continue
+                if pat and not root.endswith("bin") and not pat.search(f):
+                    continue
+                p = os.path.join(dp, f)
+                if os.path.isfile(p):
+                    out.append(p)
+    return sorted(out)
+
+
+def sha(p):
+    h = hashlib.sha256()
+    try:
+        with open(p, "rb") as f:
+            for b in iter(lambda: f.read(65536), b""):
+                h.update(b)
+    except Exception:
+        return ""
+    return h.hexdigest()
+
+
+def integrity():
+    try:
+        base = json.load(open(BASE))
+    except Exception:
+        return {"baseline": False, "changed": [], "new": [], "missing": [], "files": 0, "when": 0}
+    now = {p: sha(p) for p in watched()}
+    files = base.get("files", {})
+    # the files the shell rewrites by itself are expected to change (generated configs)
+    gen = re.compile(r"(rice-settings\.lua|config\.kdl|/\.config/rice/)")
+    changed = [p.replace(HOME, "~") for p, h in now.items() if p in files and files[p] != h and not gen.search(p)]
+    new = [p.replace(HOME, "~") for p in now if p not in files and not gen.search(p)]
+    missing = [p.replace(HOME, "~") for p in files if p not in now]
+    return {"baseline": True, "changed": changed, "new": new, "missing": missing, "files": len(files), "when": base.get("when", 0)}
+
+
+def cmd_baseline():
+    os.makedirs(os.path.dirname(BASE), exist_ok=True)
+    d = {"when": int(time.time()), "files": {p: sha(p) for p in watched()}}
+    fd = os.open(BASE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(d, f)
+    print(json.dumps({"files": len(d["files"])}))
+
+
+# ---------------------------------------------------------------- scan
+def write_prog(d):
+    os.makedirs(CACHE, exist_ok=True)
+    tmp = PROG + ".tmp"
+    json.dump(d, open(tmp, "w"))
+    os.replace(tmp, PROG)
+
+
+def scan_paths(what):
+    if what == "home":
+        return [HOME]
+    if what == "quick":
+        return [p for p in (HOME + "/Downloads", HOME + "/Desktop", HOME + "/.local/bin", HOME + "/.config/autostart",
+                            "/tmp", "/dev/shm") if os.path.exists(p)]
+    return [what] if os.path.exists(what) else []
+
+
+def cmd_scan(what, notify=False):
+    exe = shutil.which("clamscan")
+    if not exe:
+        print("ClamAV is not installed", file=sys.stderr)
+        sys.exit(1)
+    paths = scan_paths(what)
+    if not paths:
+        print("nothing to scan", file=sys.stderr)
+        sys.exit(1)
+    os.makedirs(CACHE, exist_ok=True)
+    # not the quarantine itself, and not the big caches
+    cmd = [exe, "-r", "--max-filesize=100M", "--max-scansize=200M", "--exclude-dir=" + re.escape(QDIR),
+           "--exclude-dir=/.cache/", "--exclude-dir=/.local/share/Steam/", "--exclude-dir=/node_modules/"] + paths
+    st = {"running": True, "pid": os.getpid(), "what": what, "files": 0, "current": "", "found": [], "start": int(time.time()), "done": False, "error": ""}
+    write_prog(st)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+
+    def stop(*a):
+        p.terminate()
+        st["running"] = False
+        st["error"] = "Stopped"
+        write_prog(st)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, stop)
+    last = 0
+    for line in p.stdout:
+        line = line.rstrip("\n")
+        m = re.match(r"^(.*): (.+) FOUND$", line)
+        if m:
+            st["found"].append({"path": m.group(1), "name": m.group(2)})
+        elif re.match(r"^.*: (OK|Empty file)$", line):
+            st["files"] += 1
+            st["current"] = line.rsplit(": ", 1)[0]
+        if time.time() - last > 0.4:
+            write_prog(st)
+            last = time.time()
+    p.wait()
+    st["running"] = False
+    st["done"] = True
+    st["end"] = int(time.time())
+    if p.returncode not in (0, 1):
+        st["error"] = "ClamAV stopped with an error (code %d)" % p.returncode
+    write_prog(st)
+    if st["done"] and not st["error"]:
+        json.dump({"when": st["end"], "what": what, "files": st["files"], "found": st["found"]}, open(LAST, "w"))
+    if notify and shutil.which("notify-send"):
+        if st["found"]:
+            subprocess.run(["notify-send", "-u", "critical", "-i", "security-low", "Virus scan: %d threat(s) found" % len(st["found"]),
+                            "Open Settings > Security to move them to quarantine."])
+        elif st["done"] and not st["error"]:
+            subprocess.run(["notify-send", "-i", "security-high", "Virus scan done", "%d files, nothing found." % st["files"]])
+
+
+def cmd_stop():
+    try:
+        pid = json.load(open(PROG)).get("pid")
+        if pid:
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def qlist():
+    out = []
+    if os.path.isdir(QDIR):
+        for f in sorted(os.listdir(QDIR)):
+            if f.endswith(".json"):
+                try:
+                    out.append(json.load(open(os.path.join(QDIR, f))))
+                except Exception:
+                    pass
+    return out
+
+
+def cmd_quarantine():
+    try:
+        found = json.load(open(PROG)).get("found", [])
+    except Exception:
+        found = []
+    os.makedirs(QDIR, mode=0o700, exist_ok=True)
+    n = 0
+    for it in found:
+        src = it["path"]
+        if not os.path.isfile(src) or os.path.islink(src):
+            continue
+        name = "%d-%s" % (int(time.time() * 1000) % 10**10, os.path.basename(src))
+        dst = os.path.join(QDIR, name)
+        try:
+            shutil.move(src, dst)
+            os.chmod(dst, 0o000)
+        except Exception:
+            continue
+        json.dump({"name": name, "from": src, "virus": it["name"], "when": int(time.time())}, open(dst + ".json", "w"))
+        n += 1
+    try:
+        d = json.load(open(PROG))
+        d["found"] = [f for f in d.get("found", []) if os.path.exists(f["path"])]
+        write_prog(d)
+    except Exception:
+        pass
+    print(json.dumps({"moved": n}))
+
+
+def cmd_restore(name):
+    meta = os.path.join(QDIR, os.path.basename(name) + ".json")
+    try:
+        m = json.load(open(meta))
+    except Exception:
+        sys.exit("not in quarantine")
+    src = os.path.join(QDIR, m["name"])
+    os.chmod(src, 0o600)
+    os.makedirs(os.path.dirname(m["from"]), exist_ok=True)
+    shutil.move(src, m["from"])
+    os.remove(meta)
+
+
+def cmd_delete(name):
+    names = [m["name"] for m in qlist()] if name == "all" else [os.path.basename(name)]
+    for n in names:
+        for p in (os.path.join(QDIR, n), os.path.join(QDIR, n + ".json")):
+            try:
+                os.chmod(p, 0o600)
+                os.remove(p)
+            except Exception:
+                pass
+
+
+# ---------------------------------------------------------------- hardening
+def harden_cmd(on):
+    if on:
+        body = "\\n".join("%s = %s" % kv for kv in HARDEN)
+        return "printf '# DarkShadow Shell: Settings > Security > Experimental\\n%s\\n' | sudo tee %s >/dev/null && sudo sysctl --system >/dev/null && echo Done" % (body, SYSCTL)
+    return "sudo rm -f %s && echo 'Removed. The old values come back after a restart.'" % SYSCTL
+
+
+def state():
+    last = {}
+    try:
+        last = json.load(open(LAST))
+    except Exception:
+        pass
+    prog = {}
+    try:
+        prog = json.load(open(PROG))
+        if prog.get("running") and not os.path.exists("/proc/%d" % prog.get("pid", 0)):
+            prog["running"] = False
+            prog["error"] = "Stopped"
+    except Exception:
+        pass
+    ver = run(["clamscan", "--version"]).strip().split("/")[0]
+    hard = {k: sysctl(k) for k, _ in HARDEN}
+    on = all(hard.get(k) == v for k, v in HARDEN if hard.get(k) is not None)
+    dbg = None
+    try:
+        for ln in open(HOME + "/.config/hypr/rice-settings.lua"):
+            pass
+    except Exception:
+        pass
+    return {
+        "clam": {"installed": bool(shutil.which("clamscan")), "version": ver, "db_days": db_age_days(), "install": install_cmd(),
+                 "update": "sudo freshclam"},
+        "last": last, "progress": prog, "quarantine": qlist(), "checks": checks(), "integrity": integrity(),
+        "weekly": weekly_on(),
+        "hardening": {"on": on, "values": hard, "file": os.path.exists(SYSCTL), "on_cmd": harden_cmd(True), "off_cmd": harden_cmd(False)},
+    }
+
+
+def cmd_term(args):
+    term = HOME + "/.local/bin/rice-term"
+    cmd = " ".join(args) + "; echo; read -n1 -r -p 'Press any key to close '"
+    os.execv(term if os.path.exists(term) else shutil.which("xterm") or "xterm", [term, "-e", "bash", "-c", cmd])
+
+
+def weekly_on():
+    return run(["systemctl", "--user", "is-enabled", TIMER + ".timer"]).strip() == "enabled"
+
+
+def cmd_weekly(on):
+    d = HOME + "/.config/systemd/user"
+    if on:
+        os.makedirs(d, exist_ok=True)
+        open(d + "/%s.service" % TIMER, "w").write(
+            "[Unit]\nDescription=DarkShadow Shell: weekly quick virus scan\n\n[Service]\nType=oneshot\nNice=19\nIOSchedulingClass=idle\n"
+            "ExecStart=%s/.local/bin/rice-security scan quick --notify\n" % HOME)
+        open(d + "/%s.timer" % TIMER, "w").write(
+            "[Unit]\nDescription=DarkShadow Shell: weekly quick virus scan\n\n[Timer]\nOnCalendar=weekly\nPersistent=true\nRandomizedDelaySec=1h\n\n[Install]\nWantedBy=timers.target\n")
+        run(["systemctl", "--user", "daemon-reload"])
+        run(["systemctl", "--user", "enable", "--now", TIMER + ".timer"])
+    else:
+        run(["systemctl", "--user", "disable", "--now", TIMER + ".timer"])
+    print(json.dumps({"weekly": weekly_on()}))
+
+
+def cmd_clear_logs():
+    n = 0
+    for d in (HOME + "/.cache/hyprland", "/tmp/hypr"):
+        if os.path.isdir(d):
+            for dp, dn, fn in os.walk(d):
+                for f in fn:
+                    if f.endswith((".log", ".txt")) or ".log" in f:
+                        try:
+                            os.remove(os.path.join(dp, f))
+                            n += 1
+                        except Exception:
+                            pass
+    print(json.dumps({"removed": n}))
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        print(__doc__)
+        return
+    c = a[0]
+    if c == "state":
+        print(json.dumps(state()))
+    elif c == "progress":
+        print(open(PROG).read() if os.path.exists(PROG) else "{}")
+    elif c == "scan":
+        cmd_scan(a[1] if len(a) > 1 and not a[1].startswith("--") else "quick", "--notify" in a)
+    elif c == "stop":
+        cmd_stop()
+    elif c == "quarantine":
+        cmd_quarantine()
+    elif c == "restore" and len(a) > 1:
+        cmd_restore(a[1])
+    elif c == "delete" and len(a) > 1:
+        cmd_delete(a[1])
+    elif c == "delete-all":
+        cmd_delete("all")
+    elif c == "baseline":
+        cmd_baseline()
+    elif c == "integrity":
+        print(json.dumps(integrity()))
+    elif c == "hardening" and len(a) > 1:
+        print(harden_cmd(a[1] == "on"))
+    elif c == "term":
+        cmd_term(a[1:])
+    elif c == "weekly" and len(a) > 1:
+        cmd_weekly(a[1] == "on")
+    elif c == "clear-logs":
+        cmd_clear_logs()
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

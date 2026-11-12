@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# rice-sys: power and session commands that work with and without systemd (Void Linux: runit + elogind).
+#
+#   rice-sys suspend | reboot | poweroff | lock     the power buttons of the shell, the lock screen and hypridle
+#   rice-sys session                                 at login without systemd: PipeWire, a password prompt agent
+#   rice-sys inhibit CMD...                          run CMD while sleep and idle are blocked (Keep Awake)
+#   rice-sys init                                    prints systemd, runit, openrc or other
+init() {
+  if [ -d /run/systemd/system ]; then echo systemd
+  elif [ -d /run/runit ] || [ -d /etc/runit ]; then echo runit
+  elif [ -d /run/openrc ]; then echo openrc
+  else echo other; fi
+}
+power() {
+  local a="$1"
+  if [ "$(init)" = systemd ]; then exec systemctl "$a"; fi
+  # elogind (Void, Artix, Gentoo): loginctl does the same as systemctl, without root
+  if command -v loginctl >/dev/null 2>&1 && loginctl "$a" 2>/dev/null; then exit 0; fi
+  case "$a" in
+    suspend) command -v zzz >/dev/null 2>&1 && exec sudo -n zzz
+             echo mem | sudo -n tee /sys/power/state >/dev/null ;;
+    reboot|poweroff) exec sudo -n "$a" ;;
+  esac
+}
+case "${1:-}" in
+  suspend|reboot|poweroff) power "$1" ;;
+  lock)
+    if command -v loginctl >/dev/null 2>&1 && loginctl lock-session 2>/dev/null; then exit 0; fi
+    exec "$HOME/.local/bin/rice-power" lock ;;
+  inhibit)
+    shift
+    if command -v systemd-inhibit >/dev/null 2>&1; then
+      exec systemd-inhibit --what=idle:sleep --who="DarkShadow's Shell" --why="Keep Awake" --mode=block "$@"
+    elif command -v elogind-inhibit >/dev/null 2>&1; then
+      exec elogind-inhibit --what=idle:sleep --who="DarkShadow's Shell" --why="Keep Awake" --mode=block "$@"
+    fi
+    exec "$@" ;;
+  session)
+    # systemd starts these as user services; without it the session starts them itself
+    [ "$(init)" = systemd ] && exit 0
+    if command -v pipewire >/dev/null 2>&1 && ! pgrep -u "$(id -u)" -x pipewire >/dev/null 2>&1; then
+      setsid -f pipewire >/dev/null 2>&1 </dev/null
+      sleep 0.5
+      # Void starts WirePlumber and the PulseAudio bridge from PipeWire's config (/etc/pipewire/pipewire.conf.d);
+      # when those links are missing, start them here
+      if [ ! -e /etc/pipewire/pipewire.conf.d/10-wireplumber.conf ] && command -v wireplumber >/dev/null 2>&1; then
+        pgrep -u "$(id -u)" -x wireplumber >/dev/null 2>&1 || setsid -f wireplumber >/dev/null 2>&1 </dev/null
+      fi
+      if [ ! -e /etc/pipewire/pipewire.conf.d/20-pipewire-pulse.conf ] && command -v pipewire-pulse >/dev/null 2>&1; then
+        pgrep -u "$(id -u)" -x pipewire-pulse >/dev/null 2>&1 || setsid -f pipewire-pulse >/dev/null 2>&1 </dev/null
+      fi
+    fi
+    if ! pgrep -u "$(id -u)" -f "polkit.*agent|hyprpolkitagent|polkit-gnome-authentication" >/dev/null 2>&1; then
+      for a in /usr/libexec/hyprpolkitagent /usr/lib/hyprpolkitagent/hyprpolkitagent /usr/libexec/polkit-gnome-authentication-agent-1 \
+               /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1 /usr/libexec/polkit-mate-authentication-agent-1; do
+        [ -x "$a" ] && { setsid -f "$a" >/dev/null 2>&1 </dev/null; break; }
+      done
+      pgrep -u "$(id -u)" -f "polkit.*agent|hyprpolkitagent" >/dev/null 2>&1 ||
+        { command -v hyprpolkitagent >/dev/null 2>&1 && setsid -f hyprpolkitagent >/dev/null 2>&1 </dev/null; }
+    fi
+    exit 0 ;;
+  init) init ;;
+  *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# rice-gamebar [toggle|open|close]   the game bar (SUPER + G): CPU / GPU, RAM, ping, capture, power mode,
+# gaming mode, volume and brightness on one panel over your game.
+mkdir -p "$HOME/.cache/rice"
+if ! pgrep -f "quickshell/rice-desktop" >/dev/null 2>&1; then
+  [ -x "$HOME/.local/bin/rice-desktop" ] && "$HOME/.local/bin/rice-desktop" ensure >/dev/null 2>&1
+  sleep 1
+fi
+case "${1:-toggle}" in
+  toggle|open|close) printf '%s %s\n' "$(date +%s.%N)" "${1:-toggle}" >"$HOME/.cache/rice/gamebar-open" ;;
+  *) echo "usage: rice-gamebar [toggle|open|close]" >&2; exit 1 ;;
+esac

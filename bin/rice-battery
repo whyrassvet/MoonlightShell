@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""rice-battery: battery info for the Battery widget, as JSON.
+
+  {"main": {"pct": 83, "status": "Discharging", "left": "3 h 12 min", "watts": 9.4} | null,
+   "devices": [{"name": "G502", "kind": "mouse", "pct": 60}, ...]}
+
+main    = this computer's battery (laptops); several batteries are added up
+devices = wireless mice, keyboards, headsets, controllers (needs upower)
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+
+PS = "/sys/class/power_supply"
+
+
+def rd(p, d=""):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return d
+
+
+def num(p):
+    try:
+        return float(rd(p))
+    except ValueError:
+        return None
+
+
+def nice(h):
+    if h is None or h <= 0 or h > 48:
+        return ""
+    m = int(round(h * 60))
+    return "%d h %02d min" % (m // 60, m % 60) if m >= 60 else "%d min" % m
+
+
+def main_battery():
+    bats = []
+    for d in sorted(glob.glob(PS + "/*")):
+        if rd(d + "/type") != "Battery":
+            continue
+        if rd(d + "/scope") == "Device":          # a mouse or a headset, not this computer
+            continue
+        bats.append(d)
+    if not bats:
+        return None
+    full = now = power = 0.0
+    pcts, states = [], []
+    for d in bats:
+        en, ef = num(d + "/energy_now"), num(d + "/energy_full")
+        if en is None:                              # some batteries report charge (uAh) instead of energy
+            en, ef = num(d + "/charge_now"), num(d + "/charge_full")
+        pw = num(d + "/power_now")
+        if pw is None:
+            c, v = num(d + "/current_now"), num(d + "/voltage_now")
+            pw = (c * v / 1e6) if c is not None and v is not None else None
+        if en is not None and ef:
+            now += en
+            full += ef
+        if pw:
+            power += abs(pw)
+        c = num(d + "/capacity")
+        if c is not None:
+            pcts.append(c)
+        states.append(rd(d + "/status", "Unknown"))
+    pct = int(round(100 * now / full)) if full else (int(round(sum(pcts) / len(pcts))) if pcts else -1)
+    status = "Charging" if "Charging" in states else ("Discharging" if "Discharging" in states else
+             ("Full" if all(s == "Full" for s in states) else (states[0] if states else "Unknown")))
+    left = ""
+    if power > 0 and full:
+        if status == "Discharging":
+            left = nice(now / power)
+        elif status == "Charging":
+            left = nice((full - now) / power)
+    if not left and shutil.which("upower"):
+        try:
+            dev = [l for l in subprocess.run(["upower", "-e"], capture_output=True, text=True, timeout=3).stdout.split()
+                   if "battery_BAT" in l or "DisplayDevice" in l]
+            if dev:
+                info = subprocess.run(["upower", "-i", dev[0]], capture_output=True, text=True, timeout=3).stdout
+                for l in info.splitlines():
+                    if "time to empty" in l or "time to full" in l:
+                        left = l.split(":", 1)[1].strip()
+                        break
+        except Exception:
+            pass
+    return {"pct": max(0, min(100, pct)), "status": status, "left": left, "watts": round(power / 1e6, 1) if power else 0}
+
+
+def devices():
+    out = []
+    if not shutil.which("upower"):
+        return out
+    try:
+        paths = subprocess.run(["upower", "-e"], capture_output=True, text=True, timeout=3).stdout.split()
+    except Exception:
+        return out
+    for p in paths:
+        if "line_power" in p or "DisplayDevice" in p or "battery_BAT" in p:
+            continue
+        try:
+            info = subprocess.run(["upower", "-i", p], capture_output=True, text=True, timeout=3).stdout
+        except Exception:
+            continue
+        kv = {}
+        kind = ""
+        for l in info.splitlines():
+            if ":" in l:
+                k, v = l.split(":", 1)
+                kv.setdefault(k.strip(), v.strip())
+        for k in ("mouse", "keyboard", "headset", "headphones", "gaming-input", "phone", "tablet", "touchpad", "pen", "speakers"):
+            if "\n  " + k in info:
+                kind = k
+                break
+        pct = kv.get("percentage", "").rstrip("%").replace(",", ".")
+        try:
+            pct = int(round(float(pct)))
+        except ValueError:
+            continue
+        name = kv.get("model") or kv.get("native-path") or kind or "Device"
+        out.append({"name": name, "kind": kind or "device", "pct": pct})
+    return out[:4]
+
+
+print(json.dumps({"main": main_battery(), "devices": devices()}))

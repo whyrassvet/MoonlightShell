@@ -1,0 +1,547 @@
+#!/usr/bin/env python3
+"""rice-canvasd: moves the Infinite Desktop canvas while you hold SUPER + ALT and move the mouse.
+
+It reads the keyboards and mice directly (/dev/input), so it knows for sure when the keys are held and how far the
+mouse moved, even at the edge of the screen. That needs your user in the "input" group (Settings > Desktop >
+Infinite Desktop > Allow); without it nothing happens and Settings says so.
+Hyprland starts it (rice-infinite.lua), niri too (its config); it waits quietly until you hold the keys, and stops
+with the window manager. It works on the floating windows of the workspace you are on; with Infinite Desktop on, all
+windows of that workspace float. The keys are yours to change (Settings > Desktop > Infinite Desktop > Keys).
+
+niri (rice-infinite runs these): rice-canvasd --niri on|off|toggle|pan DX DY|go left|right|up|down|state
+
+  SUPER + ALT + move the mouse      the canvas moves with the mouse (Settings can reverse it; the keys can change)
+  SUPER + left drag a window        at the edge of the screen it pushes the other windows away (when turned on)
+  rice-canvasd --check              what it finds: keyboards, mice, and whether it may read them
+  rice-canvasd --tell               a notification with the one step, when it cannot read them (Infinite Desktop on)
+"""
+# Infinite Desktop is based on the idea of Sarods2D: https://github.com/sarodscommits/hyprland-infinitie-desktop-v2 (MIT)
+import json
+import os
+import re
+import select
+import signal
+import struct
+import subprocess
+import sys
+import time
+
+RUN = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+PID = os.path.join(RUN, "rice-canvasd.pid")
+STATUS = os.path.join(RUN, "rice-canvasd.json")
+CONF = os.path.expanduser("~/.config/rice/infinite.conf")
+
+EV = struct.Struct("llHHi")
+EV_KEY, EV_REL = 1, 2
+REL_X, REL_Y = 0, 1
+META = (125, 126)
+ALT = (56, 100)
+CTRL = (29, 97)
+BTN_LEFT = 272
+
+
+NIRI = bool(os.environ.get("NIRI_SOCKET"))
+# your keys (infinite.conf): the keys you hold for the canvas, and the ones that go from window to window
+KEY_DEFAULTS = {"key_toggle": "SUPER + ALT + F" if NIRI else "SUPER + F", "mod_hold": "SUPER + ALT",
+                "mod_go": "SUPER + ALT + SHIFT" if NIRI else "SUPER + CTRL", "mod_zoom": "CTRL"}
+MODKEYS = {"SUPER": META, "ALT": ALT, "CTRL": CTRL, "SHIFT": (42, 54)}
+
+
+def conf():
+    c = {"speed": 1.0, "dir": 1, "push": 1}
+    c.update(KEY_DEFAULTS)
+    try:
+        for line in open(CONF):
+            m = re.match(r"^\s*(\w+)\s*=\s*(.*?)\s*$", line)
+            if not m or m.group(1) not in c:
+                continue
+            k, v = m.group(1), m.group(2)
+            if k in KEY_DEFAULTS:
+                if v:
+                    c[k] = v
+            else:
+                try:
+                    c[k] = float(v)
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return c
+
+
+def mods_of(combo):
+    """'SUPER + ALT' -> {'SUPER', 'ALT'} (only the modifiers)"""
+    return {p.strip().upper() for p in combo.split("+") if p.strip().upper() in MODKEYS}
+
+
+def bits(words):
+    """the 'B: KEY=...' words of /proc/bus/input/devices -> set of bit numbers"""
+    out = set()
+    for i, w in enumerate(reversed(words.split())):
+        v = int(w, 16)
+        b = 0
+        while v:
+            if v & 1:
+                out.add(i * 64 + b)
+            v >>= 1
+            b += 1
+    return out
+
+
+def devices():
+    """keyboards (they have the letters and the Windows key) and mice (they move and have a left button)"""
+    kbd, mice = [], []
+    try:
+        blocks = open(os.environ.get("RICE_INPUT_DEVICES", "/proc/bus/input/devices")).read().split("\n\n")
+    except OSError:
+        return kbd, mice
+    for b in blocks:
+        h = re.search(r"^H: Handlers=(.*)$", b, re.M)
+        if not h:
+            continue
+        ev = re.search(r"\bevent\d+\b", h.group(1))
+        if not ev:
+            continue
+        path = os.environ.get("RICE_INPUT_DIR", "/dev/input") + "/" + ev.group(0)
+        k = re.search(r"^B: KEY=(.*)$", b, re.M)
+        r = re.search(r"^B: REL=(.*)$", b, re.M)
+        keys = bits(k.group(1)) if k else set()
+        rels = bits(r.group(1)) if r else set()
+        if REL_X in rels and REL_Y in rels and BTN_LEFT in keys:
+            mice.append(path)
+        elif 30 in keys and 44 in keys and (125 in keys or 126 in keys):   # A, Z and the Windows key
+            kbd.append(path)
+    return kbd, mice
+
+
+def status(**kw):
+    try:
+        tmp = STATUS + ".tmp"
+        json.dump(dict(kw, pid=os.getpid(), t=int(time.time())), open(tmp, "w"))
+        os.replace(tmp, STATUS)
+    except OSError:
+        pass
+
+
+def hypr_alive():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    return bool(sig) and os.path.isdir(os.path.join(RUN, "hypr", sig))
+
+
+def check():
+    kbd, mice = devices()
+    print("keyboards:", ", ".join(kbd) or "none found")
+    print("mice:     ", ", ".join(mice) or "none found")
+    bad = [p for p in kbd + mice if not os.access(p, os.R_OK)]
+    if bad:
+        print("cannot read:", ", ".join(bad))
+        print("-> your user needs the 'input' group (Settings > Desktop > Infinite Desktop > Allow), then log in again")
+    elif kbd and mice:
+        print("ok: it can read them")
+    print("Hyprland:  ", "yes" if hypr_alive() else "no")
+    print("niri:      ", "yes" if NIRI else "no")
+
+
+def tell():
+    """SUPER + ALT cannot work yet: one notification with the one step that fixes it"""
+    try:
+        groups = subprocess.run(["id", "-nG"], capture_output=True, text=True, timeout=2).stdout.split()
+    except Exception:
+        groups = []
+    if "input" in groups:
+        body = "You joined the input group: log out and back in once, then it works."
+    elif os.path.exists("/etc/NIXOS"):
+        body = 'Add programs.shadows-shell.user = "%s"; to configuration.nix (or "input" to your extraGroups), rebuild, then log in again.' % os.environ.get("USER", "you")
+    else:
+        body = "One step: Settings > Desktop > Infinite Desktop > Allow (then log in again)."
+    try:
+        subprocess.Popen(["notify-send", "-a", "Infinite Desktop", "-i", "input-mouse", "SUPER + ALT + mouse needs one step", body],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def hypr_eval(code):
+    return subprocess.Popen(["hyprctl", "eval", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def cursor():
+    try:
+        a, b = subprocess.run(["hyprctl", "cursorpos"], capture_output=True, text=True, timeout=0.5).stdout.split(",")
+        return float(a), float(b)
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------- niri
+# niri has no zoom for windows, so its Infinite Desktop is the canvas you move: the windows of the workspace float,
+# and moving the canvas moves all of them (one request each, over niri's socket, kept open).
+NSTATE = os.path.expanduser("~/.config/rice/infinite-niri.json")
+_sock = [None]
+
+
+def nreq(req):
+    """one request to niri; the reply's Ok part (None when it failed)"""
+    import socket
+    for attempt in (0, 1):
+        try:
+            if _sock[0] is None:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(2)
+                s.connect(os.environ["NIRI_SOCKET"])
+                _sock[0] = (s, s.makefile("rb"))
+            s, f = _sock[0]
+            s.sendall((json.dumps(req) + "\n").encode())
+            line = f.readline()
+            if not line:
+                raise OSError("closed")
+            r = json.loads(line)
+            return r.get("Ok") if isinstance(r, dict) else None
+        except Exception:
+            try:
+                _sock[0][0].close()
+            except Exception:
+                pass
+            _sock[0] = None
+    return None
+
+
+def nact(name, **kw):
+    return nreq({"Action": {name: kw}})
+
+
+def nstate():
+    try:
+        return json.load(open(NSTATE))
+    except Exception:
+        return {"on": False, "ws": None, "floated": []}
+
+
+def nsave(st):
+    try:
+        os.makedirs(os.path.dirname(NSTATE), exist_ok=True)
+        json.dump(st, open(NSTATE, "w"))
+    except OSError:
+        pass
+
+
+def nwindows():
+    r = nreq("Windows")
+    return (r or {}).get("Windows") or []
+
+
+def nactive_ws():
+    for w in (nreq("Workspaces") or {}).get("Workspaces") or []:
+        if w.get("is_focused"):
+            return w.get("id")
+    return None
+
+
+_cache = {"t": 0, "ids": []}
+
+
+def niri_slide(dx, dy):
+    """move the canvas: every floating window of the workspace you are on"""
+    if not dx and not dy:
+        return
+    now = time.time()
+    if now - _cache["t"] > 0.5:
+        ws = nactive_ws()
+        _cache["ids"] = [w["id"] for w in nwindows() if w.get("workspace_id") == ws and w.get("is_floating")]
+        _cache["t"] = now
+    for i in _cache["ids"]:
+        nact("MoveFloatingWindow", id=i, x={"AdjustFixed": float(dx)}, y={"AdjustFixed": float(dy)})
+
+
+def niri_tick():
+    st = nstate()
+    if not st.get("on"):
+        return
+    changed = False
+    for w in nwindows():
+        if w.get("workspace_id") == st.get("ws") and not w.get("is_floating"):
+            nact("MoveWindowToFloating", id=w["id"])
+            st.setdefault("floated", []).append(w["id"])
+            changed = True
+    if changed:
+        nsave(st)
+
+
+def notify(text):
+    try:
+        subprocess.Popen(["notify-send", "-t", "1600", "-a", "Infinite Desktop", "Infinite Desktop", text],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def niri_cmd(a):
+    if not NIRI:
+        print("not in niri", file=sys.stderr)
+        sys.exit(1)
+    cmd = a[0] if a else "state"
+    st = nstate()
+    if cmd == "toggle":
+        cmd = "off" if st.get("on") else "on"
+    if cmd == "on":
+        ws = nactive_ws()
+        floated = []
+        for w in nwindows():
+            if w.get("workspace_id") == ws and not w.get("is_floating"):
+                nact("MoveWindowToFloating", id=w["id"])
+                floated.append(w["id"])
+        nsave({"on": True, "ws": ws, "floated": floated})
+        c = conf()
+        notify("On: hold %s and move the mouse" % c["mod_hold"])
+        try:
+            kbd, mice = devices()
+            if any(not os.access(p, os.R_OK) for p in kbd + mice):
+                tell()          # hold + mouse cannot work yet: say what the one step is
+        except Exception:
+            pass
+    elif cmd == "off":
+        alive = {w["id"] for w in nwindows()}
+        for i in st.get("floated", []):
+            if i in alive:
+                nact("MoveWindowToTiling", id=i)
+        nsave({"on": False, "ws": None, "floated": []})
+        notify("Off: windows are tiled again")
+    elif cmd == "pan" and len(a) >= 3:
+        _cache["t"] = 0
+        niri_slide(int(float(a[1])), int(float(a[2])))
+    elif cmd == "go" and len(a) >= 2:
+        niri_go(a[1])
+    elif cmd == "state":
+        print(json.dumps(dict(st, niri=True)))
+
+
+def niri_go(d):
+    """to the next window that way: the canvas glides until it is in the middle, and it gets the focus"""
+    ws = nactive_ws()
+    out = (nreq("FocusedOutput") or {}).get("FocusedOutput") or {}
+    lg = out.get("logical") or {}
+    sw, sh = lg.get("width", 1920), lg.get("height", 1080)
+    ws_wins = [w for w in nwindows() if w.get("workspace_id") == ws and w.get("is_floating")]
+
+    def center(w):
+        L = w.get("layout") or {}
+        p = L.get("tile_pos_in_workspace_view")
+        sz = L.get("tile_size") or [0, 0]
+        return None if not p else (p[0] + sz[0] / 2, p[1] + sz[1] / 2)
+    cur = next((w for w in ws_wins if w.get("is_focused")), None)
+    here = center(cur) if cur else (sw / 2, sh / 2)
+    if not here:
+        return
+    vec = {"left": (-1, 0), "right": (1, 0), "up": (0, -1), "down": (0, 1)}.get(d)
+    if not vec:
+        return
+    best, bd = None, 1e18
+    for w in ws_wins:
+        if cur and w["id"] == cur["id"]:
+            continue
+        c = center(w)
+        if not c:
+            continue
+        dx, dy = c[0] - here[0], c[1] - here[1]
+        along = dx * vec[0] + dy * vec[1]
+        if along <= 10:
+            continue
+        side = abs(dx * vec[1]) + abs(dy * vec[0])
+        score = along + side * 2
+        if score < bd:
+            best, bd = (w, c), score
+    if not best:
+        return
+    w, c = best
+    # glide: a few steps, so you see where it goes
+    tx, ty = sw / 2 - c[0], sh / 2 - c[1]
+    ids = [x["id"] for x in ws_wins]
+    done = [0.0, 0.0]
+    for i in range(1, 11):
+        k = 1 - (1 - i / 10) ** 3
+        sx, sy = round(tx * k - done[0]), round(ty * k - done[1])
+        for wid in ids:
+            nact("MoveFloatingWindow", id=wid, x={"AdjustFixed": float(sx)}, y={"AdjustFixed": float(sy)})
+        done[0] += sx
+        done[1] += sy
+        time.sleep(0.016)
+    nact("FocusWindow", id=w["id"])
+
+
+def main():
+    if "--check" in sys.argv:
+        check()
+        return
+    if "--tell" in sys.argv:
+        kbd, mice = devices()
+        if any(not os.access(p, os.R_OK) for p in kbd + mice):
+            tell()
+        return
+    if "--niri" in sys.argv:
+        niri_cmd(sys.argv[sys.argv.index("--niri") + 1:])
+        return
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and not NIRI:
+        return      # too early, or no Hyprland / niri: the window manager starts it again when it is up
+    # one at a time
+    try:
+        old = int(open(PID).read().strip())
+        if old != os.getpid() and os.path.exists("/proc/%d" % old) and "rice-canvasd" in open("/proc/%d/cmdline" % old).read():
+            return
+    except (OSError, ValueError):
+        pass
+    open(PID, "w").write(str(os.getpid()))
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+
+    fds = {}             # fd -> (path, kind)
+    held = set()         # keys and buttons held now
+    acc = [0.0, 0.0]     # mouse movement not sent yet
+    moved_rel = False
+    rel_hold = False     # this hold came with mouse movement: never mix in the pointer
+    hold_t = 0
+    proc = None
+    last_scan = 0
+    last_tick = 0
+    last_send = 0
+    was_on = None
+    last_cur = None
+    c = conf()
+    denied = []
+    kbd, mice = [], []
+
+    while True:
+        now = time.time()
+        if now - last_scan > 3:
+            last_scan = now
+            if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and not hypr_alive():
+                return      # Hyprland is gone
+            if NIRI and not os.path.exists(os.environ.get("NIRI_SOCKET", "")):
+                return      # niri is gone
+            c = conf()
+            kbd, mice = devices()
+            want = {p: "k" for p in kbd}
+            want.update({p: "m" for p in mice})
+            have = {v[0] for v in fds.values()}
+            for p, kind in want.items():
+                if p in have:
+                    continue
+                try:
+                    fd = os.open(p, os.O_RDONLY | os.O_NONBLOCK)
+                    fds[fd] = (p, kind)
+                    if p in denied:
+                        denied.remove(p)
+                except PermissionError:
+                    if p not in denied:
+                        denied.append(p)
+
+                except OSError:
+                    pass
+            kinds = [v[1] for v in fds.values()]
+            status(keyboards=kinds.count("k"), mice=kinds.count("m"), found_keyboards=len(kbd), found_mice=len(mice),
+                   denied=len(denied))
+        # niri, Infinite Desktop on: a new window on its workspace floats too (looked at a few times a second)
+        if NIRI and now - last_tick > 0.6:
+            last_tick = now
+            niri_tick()
+        r = []
+        if fds:
+            try:
+                r, _, _ = select.select(list(fds), [], [], 0.016)
+            except (OSError, ValueError):
+                r = []
+        else:
+            time.sleep(0.5)
+        for fd in r:
+            try:
+                data = os.read(fd, EV.size * 64)
+            except BlockingIOError:
+                continue
+            except OSError:
+                os.close(fd)
+                fds.pop(fd, None)
+                continue
+            if not data:        # the device went away
+                os.close(fd)
+                fds.pop(fd, None)
+                continue
+            for i in range(0, len(data) - EV.size + 1, EV.size):
+                _, _, t, code, val = EV.unpack_from(data, i)
+                if t == EV_KEY:
+                    if val == 1:
+                        held.add(code)
+                    elif val == 0:
+                        held.discard(code)
+                elif t == EV_REL and code in (REL_X, REL_Y):
+                    acc[code] += val
+                    moved_rel = True
+                    rel_hold = True
+
+        down = {name for name, codes in MODKEYS.items() if any(k in held for k in codes)}
+        need = mods_of(c.get("mod_hold", "SUPER + ALT")) or {"SUPER", "ALT"}
+        mode = None
+        # exactly the keys you chose (SHIFT may come along unless it is part of another choice)
+        if need <= down and not ((down - need) & {"SUPER", "ALT", "CTRL"}):
+            mode = "canvas"
+        elif "SUPER" in down and BTN_LEFT in held and not (down & {"ALT", "CTRL"}) and int(c.get("push", 0)) == 1 and not NIRI:
+            mode = "push"
+
+        # a new hold (or another kind): it starts from nothing. Moves from before never carry over, so letting go
+        # of ALT while SUPER is still down (to move a window) cannot throw the canvas forward
+        if mode != was_on:
+            if was_on == "canvas" and not NIRI:
+                hypr_eval("if RiceInfinite then RiceInfinite.save() end")
+            acc = [0.0, 0.0]
+            moved_rel = False
+            rel_hold = False
+            hold_t = time.time()
+            last_cur = cursor() if mode == "canvas" and not NIRI else None
+            was_on = mode
+        if not mode:
+            acc = [0.0, 0.0]
+            continue
+        if time.time() - last_send < 0.016 or (proc and proc.poll() is None):
+            continue
+        dx, dy = acc
+        # a touchpad gives no mouse movement: follow the pointer instead (only when this hold had no mouse movement
+        # at all: mixing both counted the same move twice)
+        if mode == "canvas" and not NIRI and not rel_hold and time.time() - hold_t > 0.25:
+            p = cursor()
+            if p and last_cur:
+                dx, dy = p[0] - last_cur[0], p[1] - last_cur[1]
+            last_cur = p
+        else:
+            acc = [0.0, 0.0]
+        sp = max(0.1, min(5.0, c["speed"]))
+        idx, idy = int(dx * sp), int(dy * sp)
+        # what is left after the whole pixels stays for the next step (slow moves are not lost)
+        if rel_hold:
+            acc = [dx - idx / sp, dy - idy / sp]
+        # never more than a big step at once: a hiccup is caught up smoothly, not in one jump
+        lim = 160
+        cx, cy = max(-lim, min(lim, idx)), max(-lim, min(lim, idy))
+        if rel_hold and (cx != idx or cy != idy):
+            acc[0] += (idx - cx) / sp
+            acc[1] += (idy - cy) / sp
+        idx, idy = cx, cy
+        if not idx and not idy:
+            continue
+        moved_rel = False
+        sign = -1 if int(c["dir"]) == 2 else 1
+        if NIRI:
+            niri_slide(idx * sign, idy * sign)
+            proc = None
+        elif mode == "canvas":
+            proc = hypr_eval("if RiceInfinite then RiceInfinite.slide(%d, %d) end" % (idx * sign, idy * sign))
+        else:
+            proc = hypr_eval("if RiceInfinite then RiceInfinite.edge_push(%d, %d) end" % (idx, idy))
+        last_send = time.time()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        try:
+            if open(PID).read().strip() == str(os.getpid()):
+                os.remove(PID)
+        except OSError:
+            pass

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Open the DarkShadow Launcher (built into the shell); the same key closes it again.
+# When the shell is not running it starts it first.
+if ! pgrep -f "quickshell/rice-desktop" >/dev/null 2>&1; then
+  "$HOME/.local/bin/rice-desktop" start >/dev/null 2>&1
+  sleep 1.2
+fi
+mkdir -p "$HOME/.cache/rice"
+printf '%s toggle\n' "$(date +%s.%N)" >"$HOME/.cache/rice/launcher-open"

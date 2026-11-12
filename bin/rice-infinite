@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# Infinite Desktop is based on the idea of Sarods2D: https://github.com/sarodscommits/hyprland-infinitie-desktop-v2 (MIT)
+# rice-infinite: Infinite Desktop (Settings > Desktop > Infinite Desktop). On Hyprland the work is done inside
+# Hyprland by ~/.config/hypr/rice-infinite.lua. Hyprland only (on niri it was rice-canvasd; gone in V4.23).
+#   rice-infinite on | off | toggle
+#   rice-infinite pan DX DY | go left|right|up|down     (niri used these; now it says Hyprland only)
+#   rice-infinite key key_toggle|mod_hold|mod_go|mod_zoom "SUPER + ALT"   your keys
+#   rice-infinite state                 JSON for the settings app
+#   rice-infinite set step|min|pan|speed|dir N   zoom step (0.05-0.4), how far it zooms out (0.1-0.9), move step in
+#                                       pixels, SUPER + ALT sensitivity (0.3-3), dir (1: the windows follow the mouse,
+#                                       2: reversed), push (1: SUPER + drag at the edge pushes the others, 0: no)
+#   rice-infinite daemon | daemon-stop  (Hyprland runs these) rice-canvasd, for SUPER + ALT + mouse
+#   rice-infinite allow                 join the input group (asks for your password; on NixOS: what to add)
+#   rice-infinite check                 what rice-canvasd finds (keyboards, mice, may it read them)
+c="${XDG_CONFIG_HOME:-$HOME/.config}/rice"
+st="$c/infinite.state" conf="$c/infinite.conf"
+mkdir -p "$c"
+hypr() { [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ] && command -v hyprctl >/dev/null 2>&1; }
+val() { sed -n "s/^$1=//p" "$2" 2>/dev/null | head -1; }
+
+niri() { [ -n "$NIRI_SOCKET" ]; }
+case "$1" in
+  on|off|toggle|pan|go)
+    # Hyprland only (V4.23): on niri it is gone; a canvas that was on there is put away
+    if niri; then "$HOME/.local/bin/rice-canvasd" --niri off >/dev/null 2>&1; echo "Infinite Desktop is for Hyprland only" >&2; exit 1; fi
+    case "$1" in pan|go) exit 0 ;; esac
+    hypr || { echo "Infinite Desktop needs Hyprland" >&2; exit 1; }
+    case "$1" in on) f='RiceInfinite.set(true)' ;; off) f='RiceInfinite.set(false)' ;; *) f='RiceInfinite.toggle()' ;; esac
+    hyprctl eval "if RiceInfinite then $f end" >/dev/null ;;
+  set)
+    case "$2" in step|min|pan|speed|dir|push) ;; *) echo "set step|min|pan|speed|dir|push N" >&2; exit 2 ;; esac
+    case "$3" in ''|*[!0-9.]*) echo "a number" >&2; exit 2 ;; esac
+    touch "$conf"
+    if grep -q "^$2=" "$conf"; then sed -i "s/^$2=.*/$2=$3/" "$conf"; else echo "$2=$3" >>"$conf"; fi
+    if hypr; then hyprctl eval "if RiceInfinite then (RiceInfinite.reload or RiceInfinite.load_cfg)() end" >/dev/null; fi ;;
+  key)
+    # your keys: key_toggle (on / off), mod_hold (hold + mouse, + arrows), mod_go (+ arrows: next window), mod_zoom
+    case "$2" in key_toggle|mod_hold|mod_go|mod_zoom) ;; *) echo "key key_toggle|mod_hold|mod_go|mod_zoom KEYS" >&2; exit 2 ;; esac
+    v="$(printf '%s' "$3" | tr 'a-z' 'A-Z' | sed 's/ *+ */ + /g; s/^ *//; s/ *$//')"
+    case "$v" in ''|*[!A-Z0-9\ +_]*) echo "keys like: SUPER + ALT" >&2; exit 2 ;; esac
+    touch "$conf"
+    grep -v "^$2=" "$conf" >"$conf.tmp" 2>/dev/null; echo "$2=$v" >>"$conf.tmp"; mv "$conf.tmp" "$conf"
+    if hypr; then hyprctl eval "if RiceInfinite then (RiceInfinite.reload or RiceInfinite.load_cfg)() end" >/dev/null
+    elif niri; then "$HOME/.local/bin/rice-niri" apply >/dev/null 2>&1; fi ;;
+  daemon)
+    # SUPER + ALT + mouse (Hyprland starts it when Infinite Desktop turns on)
+    command -v setsid >/dev/null 2>&1 && setsid -f "$HOME/.local/bin/rice-canvasd" >/dev/null 2>&1 </dev/null \
+      || { nohup "$HOME/.local/bin/rice-canvasd" >/dev/null 2>&1 </dev/null & } ;;
+  daemon-stop)
+    p="${XDG_RUNTIME_DIR:-/tmp}/rice-canvasd.pid"
+    [ -f "$p" ] && kill "$(cat "$p")" 2>/dev/null; rm -f "$p" ;;
+  check)
+    exec "$HOME/.local/bin/rice-canvasd" --check ;;
+  allow)
+    # what Settings > Allow runs in a terminal
+    if grep -qs '^ID=nixos' /etc/os-release; then
+      echo "NixOS keeps the groups in your configuration. Add \"input\" to your user in /etc/nixos/configuration.nix:"
+      echo
+      echo "  users.users.$USER.extraGroups = [ \"input\" ];      (next to the groups you already have)"
+      echo
+      echo "then run:  sudo nixos-rebuild switch   and log out and back in."
+      exit 0
+    fi
+    echo "SUPER + ALT + mouse reads the mouse and the keyboard directly. For that your user joins the 'input' group."
+    echo "(Programs you run can then read the keyboard and the mouse too.)"
+    echo
+    sudo usermod -aG input "$USER" && echo && echo "Done. Log out and back in, then it works." ;;
+  state)
+    on=$(val on "$st"); z=$(val z "$st")
+    if niri; then grep -qs '"on": *true' "$c/infinite-niri.json" && on=1 || on=0; z=1; fi
+    if niri; then dt="SUPER + ALT + F"; dg="SUPER + ALT + SHIFT"; else dt="SUPER + F"; dg="SUPER + CTRL"; fi
+    kt=$(val key_toggle "$conf"); kh=$(val mod_hold "$conf"); kg=$(val mod_go "$conf"); kz=$(val mod_zoom "$conf")
+    keys=$(printf '"keys":{"key_toggle":"%s","mod_hold":"%s","mod_go":"%s","mod_zoom":"%s"},"niri":%s,' \
+      "${kt:-$dt}" "${kh:-SUPER + ALT}" "${kg:-$dg}" "${kz:-CTRL}" "$(niri && echo true || echo false)")
+        d="${XDG_RUNTIME_DIR:-/tmp}/rice-canvasd"
+    run=false; [ -f "$d.pid" ] && kill -0 "$(cat "$d.pid")" 2>/dev/null && run=true
+    printf '{'"$keys"'"hypr":%s,"on":%s,"zoom":%s,"step":%s,"min":%s,"pan":%s,"speed":%s,"dir":%s,"push":%s,"input":%s,"group":%s,"loaded":%s,"nixos":%s,"daemon":%s,"devices":%s}\n' \
+      "$(hypr && echo true || echo false)" "$([ "$on" = 1 ] && echo true || echo false)" "${z:-1}" \
+      "$(val step "$conf" | grep . || echo 0.12)" "$(val min "$conf" | grep . || echo 0.2)" "$(val pan "$conf" | grep . || echo 180)" "$(val speed "$conf" | grep . || echo 1.0)" "$(val dir "$conf" | grep . || echo 1)" "$(val push "$conf" | grep . || echo 1)" \
+      "$(for e in /dev/input/event*; do [ -r "$e" ] && { echo true; exit 0; }; done; echo false)" \
+      "$(id -nG 2>/dev/null | tr ' ' '\n' | grep -qx input && echo true || echo false)" \
+      "$([ -f "$HOME/.config/hypr/rice-infinite.lua" ] && echo true || echo false)" \
+      "$(grep -qs '^ID=nixos' /etc/os-release && echo true || echo false)" "$run" "$(cat "$d.json" 2>/dev/null | grep . || echo null)" ;;
+  *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac

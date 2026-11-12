@@ -1,0 +1,16 @@
+# old wallpapers that were replaced: md5 and name (only a file with exactly this content is removed)
+077cdba8eb34bf5861ac10dfd07f4df0  ringed-planet.jpg
+13a45e1f0361d92188287bba54fb7fcb  eclipse.jpg
+20234b8286d7af1fcb35114ee5967d7a  deep-space.jpg
+2fa7d0cdf4b590761cb7ffd8c378c8d8  eclipse.jpg
+315ee83919f95be8240a1ba9df66987d  orbit.jpg
+55a17a8c59370a5fb3c9a5a43b8a5c2c  deep-space.jpg
+5a672e2d2d56d20cf737910efe66a9df  ringed-planet.jpg
+6363deb7e7f1659a36ee5392ac855570  nebula.jpg
+8a3772516bdd34d49cfb34394fd4b6b7  black-hole-blue.jpg
+952d4093935c99a49d83a240c65f77a9  galaxy.jpg
+96af378ff995eb1ce2b04b4d1abd383d  nebula.jpg
+9c99b5429134ec5b723b98f5f94aaec5  black-hole.jpg
+eb8d4d3b3383e5e4bb51c284fb49e9c6  galaxy.jpg
+ef0e28e8f0690b812e2ed394d89267df  black-hole.jpg
+f23cca299365e13f3984fe8eb3f6dccd  black-hole-blue.jpg

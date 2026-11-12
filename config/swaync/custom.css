@@ -1,0 +1,34 @@
+.control-center {
+  background-color: rgba(13, 13, 13, 0.55);
+}
+
+.floating-notifications.background .notification-row .notification-background {
+  background-color: rgba(13, 13, 13, 0.6);
+}
+
+.widget-buttons-grid {
+  padding: 10px 4px;
+}
+
+.widget-buttons-grid>flowbox>flowboxchild>button,
+.widget-buttons-grid>flowbox>flowboxchild>button label {
+  font-size: 26px;
+}
+
+.widget-buttons-grid>flowbox>flowboxchild>button {
+  padding: 10px 14px;
+  margin: 4px 8px;
+}
+
+.widget-buttons-grid>flowbox>flowboxchild>button:checked {
+  background: alpha(#ff4d4d, 0.35);
+}
+
+.widget-buttons-grid>flowbox>flowboxchild>button:checked label {
+  color: #ff4d4d;
+  text-decoration: line-through;
+}
+
+.widget-buttons-grid>flowbox>flowboxchild>button label {
+  font-family: "JetBrainsMono Nerd Font", "Symbols Nerd Font", "Symbols Nerd Font Mono";
+}

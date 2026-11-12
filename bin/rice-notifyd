@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Started with the window manager instead of plain swaync: swaync shows notifications unless the shell does it
+# itself (Settings > Notifications > Shown by: DarkShadow; rice-cc engine shell).
+# Other notification daemons (mako, dunst) start by themselves through D-Bus when an app sends a notification
+# before ours runs (on niri that is mako's plain blue box): they are stopped, and D-Bus is told to start this
+# script instead of them from now on.
+svc="${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.freedesktop.Notifications.service"
+want="[D-BUS Service]
+Name=org.freedesktop.Notifications
+Exec=$HOME/.local/bin/rice-notifyd"
+if [ "$(cat "$svc" 2>/dev/null)" != "$want" ]; then
+  mkdir -p "${svc%/*}" && printf '%s\n' "$want" > "$svc"
+  busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig >/dev/null 2>&1 || true
+fi
+for n in mako .mako-wrapped dunst .dunst-wrapped; do pkill -x "$n" 2>/dev/null; done
+if grep -q '"engine": *"shell"' "$HOME/.config/rice/cc.json" 2>/dev/null; then
+  exit 0
+fi
+pgrep -x swaync >/dev/null 2>&1 && exit 0
+exec swaync "$@"

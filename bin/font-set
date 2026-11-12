@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/fonts.json"
+BIN = HOME + "/.local/bin"
+KITTY_DIR = HOME + "/.config/kitty"
+DEF = "JetBrainsMono Nerd Font"          # terminal (kitty) and Nerd Font icons
+UI = "Google Sans Flex"                  # the interface font since V3.23 (rice-fonts installs it)
+UI_FALLBACK = ["Google Sans Flex", "Rubik", "Inter"]
+KEYS = ["main", "numbers", "title", "mono", "icons", "reading"]
+UI_KEYS = ["main", "numbers", "title", "reading"]
+V = 2
+
+
+def run(a, t=5):
+    try:
+        return subprocess.run(a, capture_output=True, text=True, timeout=t).stdout
+    except Exception:
+        return None
+
+
+def load():
+    try:
+        j = json.load(open(CFG))
+    except Exception:
+        j = {}
+    out = {k: (j.get(k) or default(k)) for k in KEYS}
+    out["v"] = j.get("v", 1) if j else V
+    return out
+
+
+def ui_font():
+    fams = families() or []
+    low = [f.lower() for f in fams]
+    for f in UI_FALLBACK:
+        if f.lower() in low:
+            return f
+    return DEF
+
+
+def default(k):
+    return ui_font() if k in UI_KEYS else DEF
+
+
+def cmd_migrate():
+    """v1 used JetBrainsMono Nerd Font for everything: the interface roles move to Google Sans Flex"""
+    try:
+        j = json.load(open(CFG))
+    except Exception:
+        j = {}
+    if j.get("v", 1) >= V:
+        print("Fonts: up to date")
+        return
+    ui = ui_font()
+    for k in UI_KEYS:
+        if not j.get(k) or j.get(k) == DEF:
+            if ui == UI:
+                j[k] = ui
+            else:
+                j.pop(k, None)     # not chosen: follows Google Sans Flex once it is installed
+    for k in ("mono", "icons"):
+        j.setdefault(k, DEF)
+    j["v"] = V
+    save(j)
+    print("Fonts: interface uses %s" % ui)
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"), indent=2, ensure_ascii=False)
+    os.replace(tmp, CFG)
+
+
+def families():
+    out = run(["fc-list", ":", "family"])
+    if out is None:
+        return None
+    fams = set()
+    for ln in out.splitlines():
+        for p in ln.split(","):
+            if p.strip():
+                fams.add(p.strip())
+    return sorted(fams, key=str.lower)
+
+
+def apply_waybar():
+    run([BIN + "/waybar-set", "fonts-apply"], 15)
+    subprocess.Popen([BIN + "/waybar-reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+
+
+def apply_kitty(fam):
+    conf = KITTY_DIR + "/kitty.conf"
+    if not os.path.exists(conf):
+        return
+    open(KITTY_DIR + "/rice-font.conf", "w").write("font_family %s\n" % fam)
+    s = open(conf).read()
+    if "rice-font.conf" not in s:
+        if not os.path.exists(conf + ".bak-font"):
+            open(conf + ".bak-font", "w").write(s)
+        open(conf, "w").write(s.rstrip() + "\n\ninclude rice-font.conf\n")
+    for n in ("kitty", ".kitty-wrapped"):
+        run(["pkill", "-USR1", "-x", n], 3)
+    # the other terminals (Settings > Desktop > Look & Feel) get the font too
+    if os.access(BIN + "/rice-look", os.X_OK):
+        subprocess.Popen([BIN + "/rice-look", "colors"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def cmd_set(key, val):
+    if key not in KEYS:
+        sys.exit("unknown font role: " + key)
+    val = val.strip()
+    if not val:
+        sys.exit("Type a font family name")
+    fams = families()
+    if fams is not None and val.lower() not in [f.lower() for f in fams]:
+        near = [f for f in fams if val.lower() in f.lower() or f.lower() in val.lower()][:4]
+        sys.exit("Not installed: %s%s" % (val, ("  (try: " + ", ".join(near) + ")") if near else ""))
+    fam = next((f for f in (fams or []) if f.lower() == val.lower()), val)
+    c = load()
+    c["v"] = V
+    c[key] = fam
+    save(c)
+    if key in ("main", "icons"):
+        apply_waybar()
+    if key == "mono":
+        apply_kitty(fam)
+    print("Font set: %s" % fam)
+
+
+def main(a):
+    if len(a) < 2:
+        sys.exit("usage: font-set state|list|set ROLE FAMILY|reset|migrate")
+    if a[1] == "state":
+        print(json.dumps(load()))
+    elif a[1] == "list":
+        print("\n".join(families() or []))
+    elif a[1] == "set" and len(a) >= 4:
+        cmd_set(a[2], " ".join(a[3:]))
+    elif a[1] == "migrate":
+        cmd_migrate()
+    elif a[1] == "reset":
+        if os.path.exists(CFG):
+            os.remove(CFG)
+        apply_waybar()
+        apply_kitty(DEF)
+        print("Fonts reset")
+    else:
+        sys.exit("usage: font-set state|list|set ROLE FAMILY|reset")
+
+
+main(sys.argv)

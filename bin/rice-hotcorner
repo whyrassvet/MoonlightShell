@@ -1,0 +1,685 @@
+#!/usr/bin/env python3
+"""rice-hotcorner: the hot corner panel (Settings > Hot corners).
+
+  rice-hotcorner config                     settings as JSON
+  rice-hotcorner set KEY VALUE              change a setting
+  rice-hotcorner list sections|toggles|apps A,B   set order and which ones are shown
+  rice-hotcorner reset
+  rice-hotcorner state                      live status as JSON (for the panel)
+  rice-hotcorner open                       open the panel now
+  rice-hotcorner awake | dnd | wifi | bluetooth | gaming | mic      toggle
+  rice-hotcorner scheme KEY                                 color scheme (rice-colors)
+  rice-hotcorner record full|region|stop
+  rice-hotcorner rec-info                   recorder status + recent recordings (with thumbnails) as JSON
+  rice-hotcorner shot full|region
+  rice-hotcorner show PATH | folder recordings|screenshots
+"""
+import fcntl
+import glob
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/hotcorner.json"
+CACHE = HOME + "/.cache/rice"
+OPEN_CMD = CACHE + "/hotcorner-open"
+AWAKE_PID = CACHE + "/awake.pid"
+REC_PID = CACHE + "/record.pid"
+REC_INFO = CACHE + "/record.json"
+HYPR = HOME + "/.config/hypr"
+GAMING = HYPR + "/rice-gaming.lua"
+BLUR_LUA = HYPR + "/rice-hotcorner.lua"
+KEYS_LUA = HYPR + "/rice-keys.lua"
+HLUA = HYPR + "/hyprland.lua"
+WAYBAR_COLORS = HOME + "/.config/waybar/colors.css"
+
+
+def xdg_dir(name, fallback):
+    try:
+        out = subprocess.run(["xdg-user-dir", name], capture_output=True, text=True, timeout=2).stdout.strip()
+        if out and out != HOME:
+            return out
+    except Exception:
+        pass
+    return HOME + "/" + fallback
+
+
+REC_DIR = xdg_dir("VIDEOS", "Videos") + "/Recordings"
+WALL_CURRENT = HOME + "/.cache/hyprquickpaper-current"
+WALL_APPLY = HOME + "/.config/quickshell/hyprquickpaper/commands.sh"
+THUMBS = HOME + "/.cache/quickshell/thumbs"
+
+
+def wall_dir():
+    for d in (os.environ.get("WALLPAPER_DIR", ""), HOME + "/Pictures/Wallpapers", HOME + "/Wallpapers",
+              xdg_dir("PICTURES", "Pictures") + "/Wallpapers", HOME + "/Pictures"):
+        if d and os.path.isdir(d):
+            return d
+    return ""
+
+
+def walls(limit=9):
+    """the newest of your wallpapers (all your folders: rice-walls), the one you have first"""
+    try:
+        j = json.loads(subprocess.run([HOME + "/.local/bin/rice-walls", "list"], capture_output=True, text=True,
+                                      timeout=5).stdout)
+    except Exception:
+        return [], ""
+    cur = j.get("current", "")
+    ws = j.get("walls") or []
+
+    def mt(f):
+        try:
+            return os.path.getmtime(f)
+        except OSError:
+            return 0
+    ws = sorted(ws, key=lambda w: (w["path"] != cur, -mt(w["path"])))[:limit]
+    return [{"path": w["path"], "thumb": w.get("thumb") or ("" if w.get("live") else w["path"]), "name": os.path.basename(w["path"]),
+             "live": w.get("live", False)} for w in ws], cur
+
+
+SHOT_DIR = xdg_dir("PICTURES", "Pictures") + "/Screenshots"
+
+SECTIONS = ["awake", "wallpaper", "colors", "apps", "record", "shot", "toggles", "media"]
+TOGGLES = ["wifi", "bluetooth", "dnd", "gaming", "mic", "settings", "wallpaper", "lock"]
+DEFAULTS = {
+    "enabled": True, "corner": "bottom-right", "trigger": 4, "delay": 150, "close_on_leave": True,
+    "sections": ["awake", "wallpaper", "apps", "toggles"], "header": True,
+    "apps": [],
+    "toggles": ["wifi", "bluetooth", "dnd", "gaming", "settings"],
+    "width": 420, "radius": 26, "opacity": 0.9, "animation": "grow", "speed": 1.0,
+    "audio": False, "rec_sound": True, "rec_mic": False, "clipboard": True,
+    "rec_quality": "high", "rec_res": "native", "rec_fps": "60", "rec_encoder": "cpu",
+    "blur": True, "transparency": True, "card_alpha": 0.05, "tint": False, "scale": 1.0,
+}
+INTS = {"trigger": (1, 16), "delay": (0, 800), "width": (300, 680), "radius": (0, 36)}
+FLOATS = {"opacity": (0.3, 1.0), "speed": (0.5, 2.0), "card_alpha": (0.0, 0.2), "scale": (0.75, 1.5)}
+CHOICES = {"corner": ["bottom-right", "bottom-left", "top-right", "top-left"], "animation": ["grow", "slide", "scale", "fade"],
+           "rec_quality": ["best", "high", "balanced", "small"], "rec_res": ["native", "1440", "1080", "720"],
+           "rec_fps": ["30", "60"], "rec_encoder": ["cpu", "gpu"]}
+BOOLS = ("enabled", "close_on_leave", "audio", "rec_sound", "rec_mic", "clipboard", "header", "blur", "transparency", "tint")
+
+
+def die(m):
+    sys.stderr.write(m + "\n")
+    sys.exit(1)
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def q(cmd, timeout=3):
+    """run quietly, return (code, stdout)"""
+    if not shutil.which(cmd[0]):
+        return 127, ""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return r.returncode, r.stdout
+    except Exception:
+        return 1, ""
+
+
+def bg(cmd):
+    if shutil.which(cmd[0]):
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def notify(title, body, icon="dialog-information"):
+    if shutil.which("notify-send"):
+        # resident: clicking it in the notification center does not remove it
+        bg(["notify-send", "-a", "DarkShadow's Shell", "-h", "boolean:resident:true", "-i", icon, title, body])
+    else:
+        bg(["busctl", "--user", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications", "Notify", "susssasa{sv}i", "DarkShadow's Shell", "0", icon, title, body, "0", "0", "5000"])
+
+
+# ---------------- settings ----------------
+def load():
+    c = json.loads(json.dumps(DEFAULTS))
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        raw = {}
+    for k, d in DEFAULTS.items():
+        v = raw.get(k, d)
+        if k in BOOLS:
+            c[k] = v is True
+        elif k in CHOICES:
+            c[k] = v if v in CHOICES[k] else d
+        elif k in INTS:
+            try:
+                c[k] = int(clamp(float(v), *INTS[k]))
+            except Exception:
+                c[k] = d
+        elif k in FLOATS:
+            try:
+                c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+            except Exception:
+                c[k] = d
+        elif k == "sections":
+            c[k] = [x for x in v if x in SECTIONS] if isinstance(v, list) else d
+        elif k == "toggles":
+            c[k] = [x for x in v if x in TOGGLES] if isinstance(v, list) else d
+        elif k == "apps":
+            c[k] = [str(x) for x in v][:12] if isinstance(v, list) else d
+    if not c["apps"]:
+        # pinned apps: the dock's list, or a sensible default
+        try:
+            c["apps"] = json.load(open(DIR + "/desktop.json"))["dock"]["apps"][:8]
+        except Exception:
+            c["apps"] = ["kitty", "firefox", "org.gnome.Nautilus", "spotify", "discord", "steam", "code", "obs"]
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"))
+    os.replace(tmp, CFG)
+
+
+# ---------------- helpers ----------------
+def alive(pidfile):
+    try:
+        pid = int(open(pidfile).read().strip())
+        os.kill(pid, 0)
+        return pid
+    except Exception:
+        return 0
+
+
+def accent():
+    try:
+        m = re.search(r"@define-color\s+accent\s+(#[0-9a-fA-F]{6})", open(WAYBAR_COLORS).read())
+        if m:
+            return m.group(1)
+    except Exception:
+        pass
+    return "#d4d4d4"
+
+
+def wifi_on():
+    code, out = q(["nmcli", "radio", "wifi"])
+    return code == 0 and out.strip() == "enabled"
+
+
+def bt_on():
+    code, out = q(["bluetoothctl", "show"])
+    return code == 0 and re.search(r"Powered:\s*yes", out) is not None
+
+
+def shell_notify():
+    """the shell shows notifications itself (rice-cc engine shell): Do Not Disturb lives in cc.json, swaync is
+    not asked at all (swaync-client without -sw waits for swaync forever when it is not running)"""
+    try:
+        return json.load(open(os.path.expanduser("~/.config/rice/cc.json"))).get("engine") == "shell"
+    except Exception:
+        return False
+
+
+def dnd_on():
+    if shell_notify():
+        try:
+            return json.load(open(os.path.expanduser("~/.config/rice/cc.json"))).get("dnd") is True
+        except Exception:
+            return False
+    code, out = q(["swaync-client", "-D", "-sw"], timeout=2)
+    return code == 0 and out.strip() == "true"
+
+
+def gaming_on():
+    if os.path.exists(DIR + "/gaming-on"):
+        return True
+    try:
+        return "Gaming mode from the hot corner" in open(GAMING).read()
+    except Exception:
+        return False
+
+
+def mic_muted():
+    code, out = q(["wpctl", "get-volume", "@DEFAULT_AUDIO_SOURCE@"])
+    return code == 0 and "MUTED" in out
+
+
+def recordings():
+    files = []
+    for ext in ("mp4", "mkv", "webm"):
+        files += glob.glob(REC_DIR + "/*." + ext)
+    files.sort(key=os.path.getmtime, reverse=True)
+    out = []
+    for f in files[:4]:
+        st = os.stat(f)
+        out.append({"name": os.path.basename(f), "path": f, "mb": round(st.st_size / 1048576, 1),
+                    "time": time.strftime("%d %b %H:%M", time.localtime(st.st_mtime))})
+    return out
+
+
+def state():
+    rec = {}
+    if alive(REC_PID):
+        try:
+            rec = json.load(open(REC_INFO))
+        except Exception:
+            rec = {"start": time.time()}
+    tools = {t: shutil.which(t) is not None for t in
+             ("wf-recorder", "gpu-screen-recorder", "grim", "slurp", "wl-copy", "nmcli", "bluetoothctl", "wpctl", "swaync-client")}
+    wl = walls()
+    schemes, scheme = [], ""
+    if "colors" in load().get("sections", []):
+        try:
+            rc = HOME + "/.local/bin/rice-colors"
+            schemes = json.loads(subprocess.run([rc, "list"], capture_output=True, text=True, timeout=5).stdout)
+            scheme = subprocess.run([rc, "get"], capture_output=True, text=True, timeout=5).stdout.strip()
+        except Exception:
+            pass
+    out = {
+        "schemes": schemes, "scheme": scheme,
+        "awake": bool(alive(AWAKE_PID)), "recording": bool(rec), "rec_start": rec.get("start", 0),
+        "wifi": wifi_on(), "bluetooth": bt_on(), "dnd": dnd_on(), "gaming": gaming_on(), "mic_muted": mic_muted(),
+        "recordings": recordings(), "rec_dir": REC_DIR, "walls": wl[0], "wall": wl[1], "shot_dir": SHOT_DIR, "accent": accent(), "tools": tools,
+        "now": time.time(),
+    }
+    print(json.dumps(out))
+
+
+# ---------------- actions ----------------
+def apply_blur(c):
+    """Blur behind the panel is a Hyprland layer rule; we own it in rice-hotcorner.lua."""
+    text = "-- generated by rice-hotcorner (Settings > Hot corners > Blur & transparency)\n"
+    if c["blur"]:
+        text += ('hl.layer_rule({\n    name  = "rice-hotcorner-blur",\n    match = { namespace = "rice-hotcorner" },\n'
+                 '    blur = true,\n    ignore_alpha = 0.35,\n})\n')
+    changed = False
+    old = open(BLUR_LUA).read() if os.path.exists(BLUR_LUA) else None
+    if old != text:
+        os.makedirs(HYPR, exist_ok=True)
+        open(BLUR_LUA, "w").write(text)
+        changed = True
+    # an older version put a fixed rule into rice-keys.lua; remove it so the switch works
+    try:
+        k = open(KEYS_LUA).read()
+        n = re.sub(r'\n?-- blur behind the hot corner panel\nhl\.layer_rule\(\{\s*name\s*=\s*"rice-hotcorner-blur",.*?\}\)\n?', "\n", k, flags=re.S)
+        if n != k:
+            open(KEYS_LUA, "w").write(n)
+            changed = True
+    except FileNotFoundError:
+        pass
+    try:
+        h = open(HLUA).read()
+        if 'require("rice-hotcorner")' not in h:
+            if not os.path.exists(HLUA + ".bak-hotcorner"):
+                shutil.copy2(HLUA, HLUA + ".bak-hotcorner")
+            a = 'require("rice-settings")'
+            h = h.replace(a, a + '\nrequire("rice-hotcorner")') if h.count(a) == 1 else h.rstrip("\n") + '\nrequire("rice-hotcorner")\n'
+            open(HLUA, "w").write(h)
+            changed = True
+    except FileNotFoundError:
+        pass
+    if changed:
+        q([os.path.expanduser("~/.local/bin/rice-wm"), "reload"])
+
+
+def toggle_awake():
+    pid = alive(AWAKE_PID)
+    if pid:
+        os.kill(pid, signal.SIGTERM)
+        os.remove(AWAKE_PID)
+        notify("Keep Awake off", "Normal power management")
+        return
+    os.makedirs(CACHE, exist_ok=True)
+    # systemd-inhibit, or elogind-inhibit without systemd (rice-sys picks)
+    p = subprocess.Popen([os.path.expanduser("~/.local/bin/rice-sys"), "inhibit", "sleep", "infinity"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    open(AWAKE_PID, "w").write(str(p.pid))
+    notify("Keep Awake on", "The screen will not lock or sleep")
+
+
+def region():
+    code, out = q(["slurp"], timeout=60)
+    return out.strip() if code == 0 and out.strip() else None
+
+
+def sound_source(mic=False):
+    """what wf-recorder should listen to: the sound of the computer (the default output's monitor),
+    or the microphone. wf-recorder's plain -a takes the default INPUT, which is the microphone,
+    so recordings had no game or video sound."""
+    q = lambda cmd: subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.strip()
+    try:
+        if shutil.which("pactl"):
+            name = q(["pactl", "get-default-source" if mic else "get-default-sink"])
+            if name:
+                return name if mic else name + ".monitor"
+        if shutil.which("wpctl"):
+            out = q(["wpctl", "inspect", "@DEFAULT_AUDIO_SOURCE@" if mic else "@DEFAULT_AUDIO_SINK@"])
+            m = re.search(r'node\.name = "([^"]+)"', out)
+            if m:
+                return m.group(1) if mic else m.group(1) + ".monitor"
+    except Exception:
+        pass
+    return ""
+
+
+REC_THUMBS = CACHE + "/rec-thumbs"
+# quality -> x264 CRF (lower = sharper and bigger) and preset (slower = smaller for the same look, but heavier)
+REC_QUALITY = {"best": (15, "fast"), "high": (18, "veryfast"), "balanced": (23, "veryfast"), "small": (28, "veryfast")}
+
+
+def source_height(mode, geo=None):
+    """height in pixels of what is being recorded (a region, or the focused screen)"""
+    try:
+        if geo:
+            return int(re.search(r"x(\d+)\s*$", geo.strip()).group(1))
+        code, out = q([os.path.expanduser("~/.local/bin/rice-wm"), "monitors"], timeout=5)   # Hyprland or niri
+        mons = json.loads(out)
+        m = next((m for m in mons if m.get("focused")), mons[0])
+        return int(m.get("ph") or m["height"])
+    except Exception:
+        return 0
+
+
+def render_node():
+    for n in sorted(glob.glob("/dev/dri/renderD*")):
+        return n
+    return ""
+
+
+def video_args(c, src_h):
+    """quality, fps, size and encoder for wf-recorder (empty list = wf-recorder's own defaults)"""
+    crf, preset = REC_QUALITY[c["rec_quality"]]
+    scale = c["rec_res"] != "native" and src_h and int(c["rec_res"]) < src_h
+    a = ["-r", c["rec_fps"]]
+    node = render_node() if c["rec_encoder"] == "gpu" else ""
+    if node:
+        a += ["-c", "h264_vaapi", "-d", node, "-p", "qp=%d" % (crf + 2)]
+        if scale:
+            a += ["-F", "scale_vaapi=w=-2:h=%s:format=nv12" % c["rec_res"]]
+    else:
+        a += ["-c", "libx264", "-p", "crf=%d" % crf, "-p", "preset=" + preset]
+        if scale:
+            a += ["-F", "scale=-2:%s:flags=lanczos,format=yuv420p" % c["rec_res"]]
+    return a
+
+
+def rec_thumb(path):
+    """a small picture from the recording (cached); "" when ffmpeg is not there"""
+    if not shutil.which("ffmpeg"):
+        return ""
+    try:
+        st = os.stat(path)
+        t = "%s/%s-%d.jpg" % (REC_THUMBS, os.path.splitext(os.path.basename(path))[0], int(st.st_mtime))
+        if os.path.isfile(t):
+            return t
+        os.makedirs(REC_THUMBS, exist_ok=True)
+        for old in glob.glob("%s/%s-*.jpg" % (REC_THUMBS, os.path.splitext(os.path.basename(path))[0])):
+            os.remove(old)
+        for ss in ("1", "0"):
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", ss, "-i", path, "-frames:v", "1",
+                            "-vf", "scale=360:-2", t], capture_output=True, timeout=15)
+            if os.path.isfile(t) and os.path.getsize(t) > 0:
+                return t
+    except Exception:
+        pass
+    return ""
+
+
+def rec_duration(path):
+    code, out = q(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", path], timeout=5)
+    try:
+        return int(float(out.strip()))
+    except Exception:
+        return 0
+
+
+def rec_info():
+    pid = alive(REC_PID)
+    start = 0
+    if pid:
+        try:
+            start = json.load(open(REC_INFO)).get("start", time.time())
+        except Exception:
+            start = time.time()
+    files = []
+    for ext in ("mp4", "mkv", "webm"):
+        files += glob.glob(REC_DIR + "/*." + ext)
+    files.sort(key=os.path.getmtime, reverse=True)
+    out = []
+    for f in files[:6]:
+        st = os.stat(f)
+        out.append({"name": os.path.basename(f), "path": f, "mb": round(st.st_size / 1048576, 1), "sec": rec_duration(f),
+                    "time": time.strftime("%d %b %H:%M", time.localtime(st.st_mtime)), "thumb": rec_thumb(f)})
+    tools = {t: shutil.which(t) is not None for t in ("wf-recorder", "gpu-screen-recorder", "slurp", "ffmpeg", "pactl", "wpctl")}
+    print(json.dumps({"recording": bool(pid), "start": start, "now": time.time(), "recordings": out, "dir": REC_DIR,
+                      "tools": tools, "gpu": bool(render_node())}))
+
+
+def record(mode):
+    c = load()
+    pid = alive(REC_PID)
+    if mode == "stop" or pid:
+        if pid:
+            os.kill(pid, signal.SIGINT)
+            for _ in range(50):
+                time.sleep(0.1)
+                if not alive(REC_PID):
+                    break
+            try:
+                f = json.load(open(REC_INFO)).get("file", "")
+            except Exception:
+                f = ""
+            for p in (REC_PID, REC_INFO):
+                if os.path.exists(p):
+                    os.remove(p)
+            notify("Recording saved", f or REC_DIR, "media-record")
+        return
+    os.makedirs(REC_DIR, exist_ok=True)
+    os.makedirs(CACHE, exist_ok=True)
+    f = time.strftime(REC_DIR + "/Recording_%Y-%m-%d_%H-%M-%S.mp4")
+    tries = []
+    if shutil.which("wf-recorder"):
+        base = ["wf-recorder", "-f", f]
+        geo = None
+        if mode == "region":
+            geo = region()
+            if not geo:
+                return
+            base += ["-g", geo]
+        vid = video_args(c, source_height(mode, geo))
+        want = c["rec_sound"] or c["rec_mic"]
+        auds = []
+        if want:
+            src = sound_source(mic=c["rec_mic"] and not c["rec_sound"])
+            if src:
+                auds.append((["--audio=" + src], ""))
+            auds.append((["-a"], "Recording with the default sound input (the chosen sound did not work)"))
+        else:
+            auds.append(([], ""))
+        for a, note in auds:
+            tries.append((base + vid + a, note))
+        # the quality settings are not taken (an older wf-recorder, no GPU encoder): wf-recorder's own defaults
+        for a, note in auds:
+            tries.append((base + a, "Recording with default quality (wf-recorder did not take the Recorder settings, see ~/.cache/rice/record.log)"))
+        if want:
+            tries.append((base, "Recording WITHOUT sound: wf-recorder could not record sound (see ~/.cache/rice/record.log)"))
+    elif shutil.which("gpu-screen-recorder"):
+        cmd = ["gpu-screen-recorder", "-w", "screen", "-f", c["rec_fps"], "-o", f]
+        if c["rec_sound"] and c["rec_mic"]:
+            cmd += ["-a", "default_output|default_input"]
+        elif c["rec_sound"]:
+            cmd += ["-a", "default_output"]
+        elif c["rec_mic"]:
+            cmd += ["-a", "default_input"]
+    else:
+        notify("Screen recorder missing", "Install wf-recorder (and slurp for regions)", "dialog-warning")
+        return
+    if not tries:
+        tries = [(cmd, "")]
+    # a recorder that stops right away (a sound device it does not take, ...) gets the next, simpler try
+    log = open(CACHE + "/record.log", "w")
+    p = None
+    for i, (cmd, note) in enumerate(tries):
+        log.write("$ " + " ".join(cmd) + "\n"); log.flush()
+        p = subprocess.Popen(cmd, stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+        if i == len(tries) - 1:
+            break
+        try:
+            p.wait(timeout=1.5)
+            log.write("(stopped at once, code %s)\n" % p.returncode); log.flush()
+        except subprocess.TimeoutExpired:
+            break
+    if note:
+        notify("Screen recording", note, "media-record")
+    open(REC_PID, "w").write(str(p.pid))
+    json.dump({"start": time.time(), "file": f}, open(REC_INFO, "w"))
+
+
+SHOOTING = CACHE + "/shooting"     # exists while a screenshot is being taken: the dashboard stays open
+
+
+def shot(mode):
+    if not shutil.which("grim"):
+        notify("Screenshot tool missing", "Install grim (and slurp for regions)", "dialog-warning")
+        return
+    os.makedirs(CACHE, exist_ok=True)
+    open(SHOOTING, "w").write(str(os.getpid()))
+    try:
+        shot_take(mode)
+    finally:
+        try:
+            os.remove(SHOOTING)
+        except OSError:
+            pass
+
+
+def shot_take(mode):
+    c = load()
+    os.makedirs(SHOT_DIR, exist_ok=True)
+    f = time.strftime(SHOT_DIR + "/Screenshot_%Y-%m-%d_%H-%M-%S.png")
+    # -l 1: light PNG compression, a big screen is saved several times faster (the file is a bit bigger)
+    cmd = ["grim", "-l", "1"]
+    if mode == "region":
+        g = region()
+        if not g:
+            return
+        cmd += ["-g", g]
+    code, _ = q(cmd + [f], timeout=20)
+    if code != 0:
+        notify("Screenshot failed", "grim could not capture the screen", "dialog-warning")
+        return
+    if c["clipboard"] and shutil.which("wl-copy"):
+        with open(f, "rb") as fh:
+            subprocess.run(["wl-copy", "--type", "image/png"], stdin=fh, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    notify("Screenshot saved", os.path.basename(f) + (" (copied)" if c["clipboard"] else ""), f)
+
+
+def gaming_toggle():
+    """gaming mode lives in rice-effects now (Settings > Services > Gaming mode has its options)"""
+    eff = HOME + "/.local/bin/rice-effects"
+    if os.path.exists(eff):
+        q([eff, "gaming", "toggle"], timeout=40)
+        return
+    notify("Gaming mode", "rice-effects is missing. Run ./install.sh --update", "dialog-warning")
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    arg = argv[2] if len(argv) > 2 else ""
+    if cmd == "config":
+        c = load()
+        if os.path.exists(CACHE + "/flat"):     # rice-effects: blur & transparency are off right now
+            c["transparency"] = False
+            c["blur"] = False
+        print(json.dumps(c))
+    elif cmd == "state":
+        state()
+    elif cmd == "open":
+        os.makedirs(CACHE, exist_ok=True)
+        open(OPEN_CMD, "w").write(str(time.time()))
+    elif cmd in ("set", "list", "reset"):
+        os.makedirs(DIR, exist_ok=True)
+        lk = open(DIR + "/.hotcorner.lock", "w")
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        c = load()
+        if cmd == "reset":
+            c = json.loads(json.dumps(DEFAULTS))
+        elif cmd == "list":
+            if arg not in ("sections", "toggles", "apps") or len(argv) < 4:
+                die("usage: rice-hotcorner list sections|toggles|apps a,b,c")
+            raw = [x.strip() for x in argv[3].split(",") if x.strip()]
+            if arg == "apps":
+                c[arg] = list(dict.fromkeys(raw))[:12]
+            else:
+                allowed = SECTIONS if arg == "sections" else TOGGLES
+                c[arg] = list(dict.fromkeys(x for x in raw if x in allowed))
+        else:
+            if len(argv) < 4 or arg not in DEFAULTS or arg in ("sections", "toggles", "apps"):
+                die("usage: rice-hotcorner set KEY VALUE")
+            v = argv[3]
+            if arg in BOOLS:
+                c[arg] = v.lower() in ("1", "true", "on", "yes")
+            elif arg in CHOICES:
+                if v not in CHOICES[arg]:
+                    die("%s: %s" % (arg, "|".join(CHOICES[arg])))
+                c[arg] = v
+            elif arg in INTS:
+                c[arg] = int(clamp(float(v), *INTS[arg]))
+            else:
+                c[arg] = round(clamp(float(v), *FLOATS[arg]), 2)
+        save(c)
+        if cmd == "reset" or arg in ("blur",):
+            apply_blur(c)
+    elif cmd == "apply":
+        apply_blur(load())
+    elif cmd == "awake":
+        toggle_awake()
+    elif cmd == "dnd":
+        cc = os.path.expanduser("~/.local/bin/rice-cc")
+        q([cc, "dnd", "toggle"] if os.access(cc, os.X_OK) else ["swaync-client", "-d", "-sw"])
+    elif cmd == "wifi":
+        q(["nmcli", "radio", "wifi", "off" if wifi_on() else "on"], timeout=8)
+    elif cmd == "bluetooth":
+        on = bt_on()
+        if not on and shutil.which("rfkill"):
+            q(["rfkill", "unblock", "bluetooth"])
+        q(["bluetoothctl", "power", "off" if on else "on"], timeout=8)
+    elif cmd == "gaming":
+        gaming_toggle()
+    elif cmd == "mic":
+        q(["wpctl", "set-mute", "@DEFAULT_AUDIO_SOURCE@", "toggle"])
+    elif cmd == "record":
+        record(arg or "full")
+    elif cmd == "rec-info":
+        rec_info()
+    elif cmd == "shot":
+        shot(arg or "full")
+    elif cmd == "scheme":
+        if arg:
+            bg([HOME + "/.local/bin/rice-colors", "mode", arg])
+    elif cmd == "wall":
+        if arg and os.path.isfile(arg):
+            # wallpaper + colors (rice-walls: pictures and live wallpapers); some versions of hyprquickpaper's script
+            # restart Quickshell, so the desktop widgets are started again afterwards if they went away
+            bg(["bash", "-c", '"$1" set "$2"; sleep 1; pgrep -f "quickshell/rice-desktop" >/dev/null || setsid -f qs -n -p "$3" >/dev/null 2>&1',
+                "_", HOME + "/.local/bin/rice-walls", arg, HOME + "/.config/quickshell/rice-desktop"])
+    elif cmd == "walls":
+        print(json.dumps(walls(60)[0]))
+    elif cmd == "show":
+        if arg and os.path.exists(arg):
+            bg(["xdg-open", arg])
+    elif cmd == "folder":
+        d = REC_DIR if arg == "recordings" else SHOT_DIR
+        os.makedirs(d, exist_ok=True)
+        bg(["xdg-open", d])
+    else:
+        die(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

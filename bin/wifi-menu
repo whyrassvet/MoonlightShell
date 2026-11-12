@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+exec "$HOME/.local/bin/rice-term" --class nmtui -e env NEWT_COLORS='root=white,black;window=white,black;border=white,black;title=white,black;button=black,white;actbutton=white,gray;checkbox=white,black;actcheckbox=black,white;entry=white,black;label=white,black;listbox=white,black;actlistbox=black,white;sellistbox=white,black;actsellistbox=black,white;textbox=white,black;acttextbox=black,white;helpline=white,black;roottext=white,black;disentry=gray,black;shadow=black,black' nmtui

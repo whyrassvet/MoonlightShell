@@ -1,0 +1,641 @@
+#!/usr/bin/env python3
+"""rice-walls: your wallpapers - the folders they come from, live (video) wallpapers and the slideshow.
+
+  rice-walls list                 every wallpaper of your folders (JSON: dirs, current, walls)
+  rice-walls state                folders, slideshow and live wallpaper settings (JSON, for Settings)
+  rice-walls set FILE             a picture or a video (live wallpaper) as your wallpaper, with its colors
+  rice-walls folder add|remove DIR
+  rice-walls waypaper on|off      Waypaper's folder in the list (on by default when Waypaper is set up)
+  rice-walls waypaper-hook on|off Waypaper also changes the colors when you pick a wallpaper there
+  rice-walls slideshow on|off     a new wallpaper every few minutes
+  rice-walls slideshow minutes N  how often (1 - 1440)
+  rice-walls slideshow order shuffle|name
+  rice-walls slideshow folder DIR only this folder ("" = all of them)
+  rice-walls next                 the next wallpaper of the slideshow now
+  rice-walls live sound on|off    live wallpapers with or without their sound
+  rice-walls transition STYLE      ripple|wave|wipe|portal|fade|slide|pixel|random|none: how a new one comes in
+  rice-walls transition speed X   0.4 (fast) .. 2.5 (slow)
+  rice-walls awww-args            the awww options for that (commands.sh uses them)
+  rice-walls start                at login: a wallpaper when there is none yet, the live wallpaper again,
+                                  and the slideshow when it is on
+Settings > Home > Wallpaper uses it, and so do the wallpaper pickers. Settings: ~/.config/rice/wallpapers.json.
+"""
+import configparser
+import fcntl
+import glob
+import hashlib
+import json
+import os
+import random
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CONF = DIR + "/wallpapers.json"
+CACHE = HOME + "/.cache/rice"
+THUMBS = HOME + "/.cache/quickshell/thumbs"
+MY_THUMBS = CACHE + "/thumbs"
+LIVE_DIR = CACHE + "/live"
+CURRENT = HOME + "/.cache/hyprquickpaper-current"      # always a picture (for a live wallpaper: one frame of it)
+LIVE = CACHE + "/live-wallpaper"                         # the video, while a live wallpaper is on
+LAST = CACHE + "/slideshow-last"
+APPLY = HOME + "/.config/quickshell/hyprquickpaper/commands.sh"
+WAYPAPER = HOME + "/.config/waypaper/config.ini"
+RUN = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+PID = RUN + "/rice-walls.pid"
+
+PICS = ("jpg", "jpeg", "png", "webp", "gif", "bmp", "jxl", "avif")
+VIDEOS = ("mp4", "webm", "mkv", "mov", "avi", "m4v")
+DEFAULTS = {"folders": [], "waypaper": True, "waypaper_post": "",
+            "slideshow": {"on": False, "minutes": 30, "order": "shuffle", "folder": ""},
+            "live": {"sound": False},
+            # how a new wallpaper comes in (Settings > Wallpaper > Animation)
+            "transition": {"style": "ripple", "speed": 1.0}}
+
+
+def load():
+    c = json.loads(json.dumps(DEFAULTS))
+    try:
+        j = json.load(open(CONF))
+        for k, v in j.items():
+            if isinstance(v, dict) and isinstance(c.get(k), dict):
+                c[k].update(v)
+            elif k in c:
+                c[k] = v
+    except Exception:
+        pass
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CONF + ".tmp"
+    json.dump(c, open(tmp, "w"), indent=2)
+    os.replace(tmp, CONF)
+
+
+def read(p, d=""):
+    try:
+        return open(p).read().strip()
+    except OSError:
+        return d
+
+
+def xdg_pictures():
+    try:
+        for line in open(HOME + "/.config/user-dirs.dirs"):
+            m = re.match(r'^XDG_PICTURES_DIR="(.*)"', line.strip())
+            if m:
+                return m.group(1).replace("$HOME", HOME)
+    except OSError:
+        pass
+    return HOME + "/Pictures"
+
+
+def waypaper_dirs():
+    """the folder(s) of Waypaper (its config.ini, [Settings] folder = ...)"""
+    if not os.path.isfile(WAYPAPER):
+        return []
+    cp = configparser.ConfigParser(interpolation=None)
+    try:
+        cp.read(WAYPAPER)
+        raw = cp.get("Settings", "folder", fallback="")
+    except Exception:
+        return []
+    out = []
+    for d in re.split(r"[\n,]", raw):
+        d = os.path.expanduser(d.strip().strip('"').strip("'"))
+        if d and os.path.isdir(d) and d not in out:
+            out.append(d.rstrip("/"))
+    return out
+
+
+def default_dir():
+    pics = xdg_pictures()
+    for d in (os.environ.get("WALLPAPER_DIR", ""), HOME + "/Pictures/Wallpapers", HOME + "/Wallpapers",
+              pics + "/Wallpapers", pics):
+        if d and os.path.isdir(d):
+            return d.rstrip("/")
+    return ""
+
+
+def dirs(c=None):
+    """[(folder, where it comes from)]: the default one, yours, Waypaper's"""
+    c = c or load()
+    out = []
+    d = default_dir()
+    if d:
+        out.append((d, "default"))
+    for d in c.get("folders") or []:
+        d = os.path.expanduser(str(d)).rstrip("/")
+        if d and os.path.isdir(d):
+            out.append((d, "yours"))
+    if c.get("waypaper", True):
+        for d in waypaper_dirs():
+            out.append((d, "waypaper"))
+    seen, res = set(), []
+    for d, why in out:
+        r = os.path.realpath(d)
+        if r not in seen:
+            seen.add(r)
+            res.append((d, why))
+    return res
+
+
+def is_video(f):
+    return f.rsplit(".", 1)[-1].lower() in VIDEOS
+
+
+def files_of(d):
+    out = []
+    for ext in PICS + VIDEOS:
+        for e in (ext, ext.upper()):
+            out += glob.glob(glob.escape(d) + "/*." + e) + glob.glob(glob.escape(d) + "/*/*." + e)
+    return out
+
+
+def all_files(c=None, only=""):
+    fs = []
+    for d, _ in dirs(c):
+        if only and os.path.realpath(d) != os.path.realpath(only):
+            continue
+        fs += files_of(d)
+    if only and not fs and os.path.isdir(only):
+        fs = files_of(only)
+    return sorted(set(fs), key=lambda f: os.path.basename(f).lower())
+
+
+def key(f):
+    return hashlib.sha1(f.encode()).hexdigest()[:16]
+
+
+def frame(f, out, w=0, h=0):
+    """one picture of a video (ffmpeg)"""
+    ff = shutil.which("ffmpeg")
+    if not ff:
+        return False
+    vf = ["-vf", "scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d" % (w, h, w, h)] if w else []
+    for ss in ("1", "0"):
+        try:
+            subprocess.run([ff, "-y", "-loglevel", "error", "-ss", ss, "-i", f, "-frames:v", "1"] + vf + ["-q:v", "3", out],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        except Exception:
+            pass
+        if os.path.isfile(out) and os.path.getsize(out) > 0:
+            return True
+    return False
+
+
+def live_now():
+    v = read(LIVE)
+    return v if v and os.path.isfile(v) else ""
+
+
+STYLES = ("ripple", "wave", "wipe", "portal", "fade", "slide", "pixel", "random", "none")
+
+
+def cursor_spot():
+    """where the pointer is, as fractions of its screen from the bottom left (awww --transition-pos); Hyprland only"""
+    try:
+        if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") or not shutil.which("hyprctl"):
+            return None
+        cx, cy = [float(v) for v in subprocess.run(["hyprctl", "cursorpos"], capture_output=True, text=True,
+                                                   timeout=1).stdout.split(",")]
+        for m in json.loads(subprocess.run(["hyprctl", "monitors", "-j"], capture_output=True, text=True,
+                                           timeout=1).stdout or "[]"):
+            sc = float(m.get("scale") or 1)
+            w, h = m["width"] / sc, m["height"] / sc
+            if m.get("transform") in (1, 3, 5, 7):
+                w, h = h, w
+            if m["x"] <= cx < m["x"] + w and m["y"] <= cy < m["y"] + h:
+                fx = (cx - m["x"]) / w
+                fy = 1 - (cy - m["y"]) / h
+                return "%.3f,%.3f" % (min(0.999, max(0.001, fx)), min(0.999, max(0.001, fy)))
+    except Exception:
+        pass
+    return None
+
+
+def awww_args(c=None):
+    """the awww img options for the chosen animation (fps high, soft curves)"""
+    c = c or load()
+    t = c.get("transition") or {}
+    style = t.get("style", "ripple")
+    if style not in STYLES:
+        style = "ripple"
+    k = max(0.4, min(2.5, float(t.get("speed", 1.0) or 1.0)))
+    if style == "random":
+        style = random.choice(("ripple", "wave", "wipe", "portal", "fade", "slide", "pixel"))
+    if style == "none":
+        return ["--transition-type", "none"]
+    spot = cursor_spot() or "center"
+    ease = "0.22,1,0.36,1"                 # quick start, long soft landing
+    a = ["--transition-fps", "120"]
+    ang = str(random.choice((20, 35, 145, 160, 200, 325)))
+    if style == "ripple":                  # a circle grows out of where your pointer is
+        a += ["--transition-type", "grow", "--transition-pos", spot, "--transition-duration", "%.2f" % (1.5 * k),
+              "--transition-bezier", "0.65,0,0.35,1"]
+    elif style == "portal":                # the old one shrinks into the pointer, the new one is behind it
+        a += ["--transition-type", "outer", "--transition-pos", spot, "--transition-duration", "%.2f" % (1.4 * k),
+              "--transition-bezier", "0.65,0,0.35,1"]
+    elif style == "wave":
+        a += ["--transition-type", "wave", "--transition-angle", ang, "--transition-wave", "40,16",
+              "--transition-duration", "%.2f" % (1.6 * k), "--transition-bezier", ease]
+    elif style == "wipe":
+        a += ["--transition-type", "wipe", "--transition-angle", ang, "--transition-duration", "%.2f" % (1.2 * k),
+              "--transition-bezier", ease]
+    elif style == "slide":
+        a += ["--transition-type", random.choice(("left", "right")), "--transition-duration", "%.2f" % (1.1 * k),
+              "--transition-bezier", ease]
+    elif style == "pixel":                 # dissolves in steps
+        a += ["--transition-type", "simple", "--transition-step", "6"]
+    else:                                  # fade
+        a += ["--transition-type", "fade", "--transition-duration", "%.2f" % (1.0 * k), "--transition-bezier", ease]
+    return a
+
+
+def cmd_list():
+    c = load()
+    ds = dirs(c)
+    files = all_files(c)
+    cur = live_now() or read(CURRENT)
+    os.makedirs(MY_THUMBS, exist_ok=True)
+    need, out = [], []
+    for f in files:
+        vid = is_video(f)
+        t = THUMBS + "/" + os.path.basename(f)
+        if vid or not os.path.isfile(t):
+            t = MY_THUMBS + "/" + key(f) + ".jpg"
+            if not os.path.isfile(t):
+                need.append((f, t))
+                t = "" if vid else f
+        src = next((why for d, why in ds if f.startswith(d + "/")), "default")
+        out.append({"path": f, "thumb": t, "name": os.path.splitext(os.path.basename(f))[0], "live": vid, "from": src})
+    # small previews for the grid, made in the background (ImageMagick, ffmpeg for videos)
+    magick = shutil.which("magick") or shutil.which("convert")
+    if need:
+        os.makedirs(CACHE, exist_ok=True)
+        lk = open(CACHE + "/thumbs.lock", "w")
+        try:
+            fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if os.fork() == 0:
+                os.setsid()
+                for f, t in need:
+                    try:
+                        if is_video(f):
+                            frame(f, t, 480, 300)
+                        elif magick:
+                            subprocess.run([magick, f + "[0]", "-thumbnail", "480x300^", "-gravity", "center", "-extent",
+                                            "480x300", "-quality", "82", t], stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL, timeout=30)
+                    except Exception:
+                        pass
+                os._exit(0)
+        except OSError:
+            pass
+    print(json.dumps({"dir": ds[0][0] if ds else "", "dirs": [{"path": d, "from": w} for d, w in ds],
+                      "current": cur, "still": read(CURRENT), "walls": out}))
+
+
+def notify(title, body):
+    try:
+        subprocess.Popen(["notify-send", "-a", "Wallpaper", "-i", "preferences-desktop-wallpaper", title, body],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+MPV_PAT = r"^([^ ]*/)?\.?mpvpaper(-wrapped)?( |$)"     # mpvpaper, /usr/bin/mpvpaper, NixOS's .mpvpaper-wrapped
+
+
+def stop_live():
+    """mpvpaper away for good: it can miss SIGTERM (paused while hidden, -p), so it gets SIGKILL when it stays"""
+    q = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.run(["pkill", "-f", MPV_PAT], **q)
+    for _ in range(15):
+        if subprocess.run(["pgrep", "-f", MPV_PAT], **q).returncode != 0:
+            return
+        time.sleep(0.1)
+    subprocess.run(["pkill", "-9", "-f", MPV_PAT], **q)
+    time.sleep(0.2)
+
+
+def start_live(v, c=None):
+    c = c or load()
+    mpv = shutil.which("mpvpaper")
+    if not mpv:
+        return False
+    stop_live()
+    # profile=fast: cheaper scaling (a wallpaper needs no film-grade filters); hwdec: the graphics card decodes;
+    # framedrop: a busy frame is skipped instead of piling up
+    opts = "loop panscan=1.0 hwdec=auto-safe profile=fast framedrop=vo" + ("" if c["live"].get("sound") else " no-audio")
+    # -p: pauses while a full-screen window hides it (no work for nothing, e.g. in games)
+    subprocess.Popen([mpv, "-p", "-o", opts, "ALL", v], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     stdin=subprocess.DEVNULL, start_new_session=True)
+    return True
+
+
+def apply_picture(p, live=False):
+    """the picture as wallpaper, and the colors from it (hyprquickpaper's commands.sh)"""
+    if os.path.isfile(APPLY):
+        env = dict(os.environ, RICE_LIVE="1") if live else None
+        subprocess.run(["bash", APPLY, p], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120)
+    else:
+        for t in ("awww", "swww"):
+            if shutil.which(t):
+                subprocess.run([t, "img", p] + awww_args(), stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=20)
+                break
+        os.makedirs(os.path.dirname(CURRENT), exist_ok=True)
+        open(CURRENT, "w").write(p)
+
+
+def cmd_set(f):
+    f = os.path.abspath(os.path.expanduser(f))
+    if not os.path.isfile(f):
+        sys.exit("rice-walls: not a file: " + f)
+    os.makedirs(CACHE, exist_ok=True)
+    if is_video(f):
+        if not shutil.which("mpvpaper"):
+            notify("Live wallpapers need mpvpaper", "Install the mpvpaper package, then pick the video again.")
+            sys.exit("rice-walls: live wallpapers need mpvpaper")
+        os.makedirs(LIVE_DIR, exist_ok=True)
+        still = LIVE_DIR + "/" + key(f) + ".jpg"
+        if not os.path.isfile(still) and not frame(f, still):
+            still = ""
+        open(LIVE, "w").write(f)
+        start_live(f)
+        # one frame of it under the video: the lock screen, the blur and the colors use it
+        if still:
+            apply_picture(still, True)
+    else:
+        if os.path.exists(LIVE):
+            os.remove(LIVE)
+        stop_live()
+        apply_picture(f)
+    open(LAST, "w").write(str(int(time.time())))
+
+
+def pick_next(c):
+    s = c["slideshow"]
+    fs = [f for f in all_files(c, s.get("folder") or "") if not is_video(f)]
+    if not fs:
+        return ""
+    cur = read(CURRENT)
+    if s.get("order") == "name":
+        i = fs.index(cur) + 1 if cur in fs else 0
+        return fs[i % len(fs)]
+    left = [f for f in fs if f != cur] or fs
+    return random.choice(left)
+
+
+def cmd_next():
+    f = pick_next(load())
+    if f:
+        cmd_set(f)
+    else:
+        sys.exit("rice-walls: no pictures in your wallpaper folders")
+
+
+def daemon():
+    """the slideshow: one at a time, it stops when the slideshow is turned off"""
+    try:
+        old = int(read(PID, "0"))
+        if old and old != os.getpid() and os.path.exists("/proc/%d" % old) and "rice-walls" in read("/proc/%d/cmdline" % old):
+            return
+    except ValueError:
+        pass
+    open(PID, "w").write(str(os.getpid()))
+    signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
+    try:
+        while True:
+            c = load()
+            if not c["slideshow"].get("on"):
+                return
+            if live_now():          # a live wallpaper stays until you pick another one
+                time.sleep(30)
+                continue
+            mins = max(1, min(1440, int(c["slideshow"].get("minutes") or 30)))
+            try:
+                last = int(read(LAST, "0"))
+            except ValueError:
+                last = 0
+            if time.time() - last >= mins * 60:
+                f = pick_next(c)
+                if f:
+                    try:
+                        cmd_set(f)
+                    except Exception:
+                        pass
+                else:
+                    open(LAST, "w").write(str(int(time.time())))
+            time.sleep(15)
+    finally:
+        if read(PID) == str(os.getpid()):
+            try:
+                os.remove(PID)
+            except OSError:
+                pass
+
+
+def spawn_daemon():
+    subprocess.Popen([os.path.abspath(sys.argv[0]), "daemon"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     stdin=subprocess.DEVNULL, start_new_session=True)
+
+
+def stop_daemon():
+    try:
+        p = int(read(PID, "0"))
+        if p and "rice-walls" in read("/proc/%d/cmdline" % p):
+            os.kill(p, signal.SIGTERM)
+    except (ValueError, OSError):
+        pass
+
+
+def shown_picture():
+    """what awww shows now ("" = nothing yet: a new install, or its cache was cleared). None: awww is not running"""
+    for t in ("awww", "swww"):
+        if not shutil.which(t):
+            continue
+        for _ in range(24):                      # at login the daemon may need a moment
+            r = subprocess.run([t, "query"], capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip():
+                m = re.search(r"image: (.+)", r.stdout)
+                return m.group(1).strip() if m else ""
+            time.sleep(0.5)
+        return None
+    return None
+
+
+def ensure_wallpaper():
+    """never an empty desktop: after installing (or when awww forgot it) the last wallpaper, or one of ours"""
+    if live_now():
+        return
+    now = shown_picture()
+    if now is None or now:
+        return
+    p = read(CURRENT).strip()
+    if not os.path.isfile(p):
+        p = ""
+        d = default_dir()
+        if d:
+            fs = [f for f in files_of(d) if not is_video(f)]
+            pref = [f for f in fs if os.path.basename(f) in ("space-black-hole.jpg", "night-peaks.jpg")]
+            p = (pref or sorted(fs) or [""])[0]
+    if p:
+        apply_picture(p)
+
+
+def cmd_start():
+    c = load()
+    ensure_wallpaper()
+    v = live_now()
+    if v and not subprocess.run(["pgrep", "-f", MPV_PAT], stdout=subprocess.DEVNULL).returncode == 0:
+        start_live(v, c)
+    if c["slideshow"].get("on"):
+        spawn_daemon()
+
+
+def waypaper_hook(on):
+    """Waypaper's post_command: our colors when you pick a wallpaper in Waypaper (yours comes back when it is off)"""
+    if not os.path.isfile(WAYPAPER):
+        sys.exit("rice-walls: Waypaper is not set up (no ~/.config/waypaper/config.ini)")
+    c = load()
+    ours = HOME + "/.local/bin/rice-walls colors $wallpaper"
+    lines = open(WAYPAPER).read().rstrip("\n").split("\n")
+    out, done, sec, end = [], False, "", None
+    for ln in lines:
+        st = ln.strip()
+        if st.startswith("["):
+            if sec == "[settings]":
+                end = len(out)
+            sec = st.lower()
+        if sec == "[settings]" and re.match(r"^post_command\s*=", st):
+            had = st.split("=", 1)[1].strip()
+            if on:
+                if "rice-walls" not in had:
+                    c["waypaper_post"] = had
+                out.append("post_command = " + ours)
+            else:
+                out.append("post_command = " + (c.get("waypaper_post", "") if "rice-walls" in had else had))
+            done = True
+            continue
+        out.append(ln)
+    if sec == "[settings]":
+        end = len(out)
+    if on and not done and end is not None:
+        while end > 0 and not out[end - 1].strip():
+            end -= 1
+        out.insert(end, "post_command = " + ours)
+    shutil.copy(WAYPAPER, WAYPAPER + ".bak")
+    open(WAYPAPER, "w").write("\n".join(out) + "\n")
+    save(c)
+
+
+def state():
+    c = load()
+    hook = False
+    if os.path.isfile(WAYPAPER):
+        hook = "rice-walls" in open(WAYPAPER).read()
+    print(json.dumps({"dirs": [{"path": d, "from": w} for d, w in dirs(c)], "folders": c["folders"],
+                      "waypaper": c["waypaper"], "waypaper_found": bool(waypaper_dirs()), "waypaper_hook": hook,
+                      "slideshow": c["slideshow"], "live": dict(c["live"], now=live_now()),
+                      "transition": c.get("transition") or {},
+                      "have": {t: shutil.which(t) is not None for t in ("mpvpaper", "ffmpeg", "matugen", "awww")}
+                      | {"magick": bool(shutil.which("magick") or shutil.which("convert"))},
+                      "running": os.path.exists(PID)}))
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else ""
+    arg = a[2] if len(a) > 2 else ""
+    if cmd == "list":
+        cmd_list()
+    elif cmd == "state":
+        state()
+    elif cmd == "set" and arg:
+        cmd_set(arg)
+    elif cmd == "colors" and arg:
+        # Waypaper set this wallpaper itself: only the colors (and what the shell remembers)
+        p = os.path.abspath(os.path.expanduser(arg))
+        if os.path.isfile(p) and not is_video(p):
+            if os.path.exists(LIVE):
+                os.remove(LIVE)
+            env = dict(os.environ, RICE_COLORS_ONLY="1")
+            subprocess.run(["bash", APPLY, p], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif cmd == "next":
+        cmd_next()
+    elif cmd == "start":
+        cmd_start()
+    elif cmd == "daemon":
+        daemon()
+    elif cmd == "folder" and arg in ("add", "remove") and len(a) > 3:
+        c = load()
+        d = os.path.expanduser(a[3]).rstrip("/")
+        fl = [x for x in c["folders"] if os.path.expanduser(x).rstrip("/") != d]
+        if arg == "add":
+            if not os.path.isdir(d):
+                sys.exit("rice-walls: not a folder: " + d)
+            fl.append(d)
+        c["folders"] = fl
+        save(c)
+    elif cmd == "waypaper" and arg in ("on", "off"):
+        c = load()
+        c["waypaper"] = arg == "on"
+        save(c)
+    elif cmd == "waypaper-hook" and arg in ("on", "off"):
+        waypaper_hook(arg == "on")
+    elif cmd == "slideshow" and arg:
+        c = load()
+        s = c["slideshow"]
+        v = a[3] if len(a) > 3 else ""
+        if arg in ("on", "off"):
+            s["on"] = arg == "on"
+            save(c)
+            stop_daemon()
+            if s["on"]:
+                os.makedirs(CACHE, exist_ok=True)
+                open(LAST, "w").write(str(int(time.time())))
+                spawn_daemon()
+        elif arg == "minutes" and v.isdigit():
+            s["minutes"] = max(1, min(1440, int(v)))
+            save(c)
+        elif arg == "order" and v in ("shuffle", "name"):
+            s["order"] = v
+            save(c)
+        elif arg == "folder":
+            s["folder"] = os.path.expanduser(v).rstrip("/") if v else ""
+            save(c)
+        else:
+            sys.exit(__doc__)
+    elif cmd == "awww-args":
+        print("\n".join(awww_args()))
+    elif cmd == "transition" and arg:
+        c = load()
+        t = dict(c.get("transition") or {})
+        if arg == "speed" and len(a) > 3:
+            t["speed"] = round(max(0.4, min(2.5, float(a[3]))), 2)
+        elif arg in STYLES:
+            t["style"] = arg
+        else:
+            sys.exit("transition " + "|".join(STYLES) + " | transition speed X")
+        c["transition"] = t
+        save(c)
+    elif cmd == "live" and arg == "sound" and len(a) > 3 and a[3] in ("on", "off"):
+        c = load()
+        c["live"]["sound"] = a[3] == "on"
+        save(c)
+        v = live_now()
+        if v:
+            start_live(v, c)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# ws-state N: Waybar's workspace button N (active or not), on Hyprland or niri
+if [ -n "${NIRI_SOCKET:-}" ]; then
+  active=$(niri msg -j workspaces 2>/dev/null | jq -r '.[] | select(.is_focused) | .idx' 2>/dev/null)
+else
+  active=$(hyprctl activeworkspace -j 2>/dev/null | jq -r .id)
+fi
+if [ "$active" = "$1" ]; then cls=active; else cls=inactive; fi
+printf '{"text":"%s","class":"%s"}\n' "$1" "$cls"

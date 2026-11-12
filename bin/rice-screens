@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""rice-screens: which screen the shell lives on, and your names for the screens (Settings > System > Screen).
+
+  rice-screens state            JSON: the screens (hypr-set monitors), the main screen, your names
+  rice-screens main NAME        the bar, the island, the dock and the menus go to this screen
+  rice-screens widgets NAME     the desktop widgets go to this screen ("main": with the shell)
+  rice-screens keep             at login: two screens or more and their places never saved yet: save them now, so
+                                they stay where they are after the next boot (they were placed in a new order)
+  rice-screens name NAME LABEL  your name for a screen ("" takes it away)
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+P = os.path.expanduser("~/.config/rice/screens.json")
+
+
+def load():
+    try:
+        d = json.load(open(P))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save(d):
+    os.makedirs(os.path.dirname(P), exist_ok=True)
+    tmp = P + ".tmp"
+    json.dump(d, open(tmp, "w"), indent=1)
+    os.replace(tmp, P)
+
+
+def screens():
+    try:
+        r = subprocess.run([os.path.expanduser("~/.local/bin/hypr-set"), "monitors"], capture_output=True, text=True, timeout=8)
+        return json.loads(r.stdout)
+    except Exception:
+        return []
+
+
+def keep_layout(d):
+    """two screens or more, never arranged in Settings: their places (and the main screen) are saved once, so the next
+    boot cannot put them in another order or make the other one the main screen"""
+    try:
+        hs = json.load(open(os.path.expanduser("~/.config/rice/hypr.json")))
+    except Exception:
+        hs = {}
+    mons = [m for m in screens() if not m.get("disabled")]
+    if len(mons) < 2:
+        return
+    if not hs.get("monitors"):
+        subprocess.run([os.path.expanduser("~/.local/bin/hypr-set"), "monitor-save-all"], capture_output=True, timeout=20)
+    if not d.get("main"):
+        # the one in the top left corner, the same as the shell picks
+        m = sorted(mons, key=lambda m: (m.get("x", 0), m.get("y", 0), m.get("name", "")))[0]
+        d["main"] = m.get("name", "")
+        if d["main"]:
+            save(d)
+
+
+def main():
+    a = sys.argv[1:]
+    d = load()
+    if not a or a[0] == "state":
+        print(json.dumps({"main": d.get("main", ""), "widgets": d.get("widgets", ""), "names": d.get("names", {}), "screens": screens()}))
+    elif a[0] == "main" and len(a) == 2 and re.fullmatch(r"[A-Za-z0-9_.:-]{1,40}", a[1]):
+        d["main"] = a[1]
+        save(d)
+    elif a[0] == "widgets" and len(a) == 2 and re.fullmatch(r"[A-Za-z0-9_.:-]{1,40}", a[1]):
+        if a[1] == "main":
+            d.pop("widgets", None)
+        else:
+            d["widgets"] = a[1]
+        save(d)
+    elif a[0] == "keep":
+        keep_layout(d)
+    elif a[0] == "name" and len(a) == 3 and re.fullmatch(r"[A-Za-z0-9_.:-]{1,40}", a[1]):
+        names = d.get("names", {})
+        label = a[2].strip()[:32]
+        if label:
+            names[a[1]] = label
+        else:
+            names.pop(a[1], None)
+        d["names"] = names
+        save(d)
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

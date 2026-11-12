@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# rice-settings          open the Settings app, or close it when it is open
+# rice-settings PAGE     open it on a page (a number: 0 Home, 2 DarkShadow bar, 7 Launcher, 8 Theme, 10 Notifications ...)
+if [ -n "${1:-}" ]; then
+  mkdir -p "$HOME/.cache/rice"
+  printf '%s\n' "$1" >"$HOME/.cache/rice/settings-page"
+  if pgrep -f "quickshell/rice-settings" >/dev/null; then
+    pkill -f "quickshell/rice-settings"
+    sleep 0.4
+  fi
+  exec qs -n -p "$HOME/.config/quickshell/rice-settings"
+fi
+if pgrep -f "quickshell/rice-settings" >/dev/null; then
+  pkill -f "quickshell/rice-settings"
+else
+  exec qs -n -p "$HOME/.config/quickshell/rice-settings"
+fi

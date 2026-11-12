@@ -1,0 +1,2 @@
+@define-color accent {{colors.primary_container.default.hex}};
+@define-color on_accent {{colors.on_primary_container.default.hex}};

@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# log out: leave Hyprland or niri (whichever runs the shell)
+exec "$HOME/.local/bin/rice-wm" exit

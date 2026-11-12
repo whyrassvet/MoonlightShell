@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: ShellCheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          shellcheck -x install.sh sync.sh install/lib/*.sh
+      - name: Python scripts compile
+        run: |
+          for f in bin/*; do
+            if head -n1 "$f" | grep -q python; then python3 -m py_compile "$f"; fi
+          done
+      - name: Installer dry run
+        run: SHADOWS_ALLOW_ROOT=1 ./install.sh --yes --dry-run

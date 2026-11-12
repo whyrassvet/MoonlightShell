@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# rice-settings-size WIDTH HEIGHT: asks Hyprland (or niri) to give the Settings window this size and to put it in the middle of
+# its screen. A floating window cannot resize itself on Wayland, only the compositor can. It tries the Lua dispatchers
+# of new Hyprland first, then the older ones, and after every try it checks whether the size really changed.
+# What it did is written to ~/.cache/rice/settings-size.log
+W="$1"; H="$2"
+case "$W$H" in ''|*[!0-9]*) exit 2 ;; esac
+# niri: its own actions do it (the window floats there by a window rule)
+if [ -n "${NIRI_SOCKET:-}" ] && command -v niri >/dev/null 2>&1; then
+  for _ in $(seq 1 20); do
+    id=$(niri msg -j windows 2>/dev/null | jq -r '.[] | select(.title == "Rice Settings") | .id' 2>/dev/null | head -1)
+    [ -n "$id" ] && break; sleep 0.2
+  done
+  [ -n "$id" ] || exit 0
+  niri msg action set-window-width --id "$id" "$W" >/dev/null 2>&1
+  niri msg action set-window-height --id "$id" "$H" >/dev/null 2>&1
+  sleep 0.15
+  niri msg action center-window --id "$id" >/dev/null 2>&1
+  exit 0
+fi
+command -v hyprctl >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+SEL='title:^Rice Settings$'
+LOG="$HOME/.cache/rice/settings-size.log"; mkdir -p "$(dirname "$LOG")"
+say() { echo "$(date +%T) $*" >> "$LOG"; }
+: > "$LOG"
+
+# prints: x y w h  (of the window)   and then   mx my mw mh  (where it should go to be in the middle of its screen)
+info() {
+  python3 - "$W" "$H" <<'PY'
+import json, subprocess, sys
+W, H = int(sys.argv[1]), int(sys.argv[2])
+def hj(a):
+    try: return json.loads(subprocess.run(["hyprctl", "-j", a], capture_output=True, text=True, timeout=3).stdout)
+    except Exception: return None
+cl, mons = hj("clients"), hj("monitors")
+w = next((c for c in (cl or []) if c.get("title") == "Rice Settings"), None)
+if not w: sys.exit(1)
+m = next((m for m in (mons or []) if m.get("id") == w.get("monitor")), (mons or [None])[0])
+tx = ty = 0
+if m:
+    sc = m.get("scale") or 1
+    mw, mh = int(m["width"] / sc), int(m["height"] / sc)
+    r = m.get("reserved") or [0, 0, 0, 0]
+    tx = int(m["x"] + (mw - W) / 2)
+    ty = int(m["y"] + r[1] + (mh - r[1] - r[3] - H) / 2)
+print(w["at"][0], w["at"][1], w["size"][0], w["size"][1], tx, ty)
+PY
+}
+near() { local d=$(( $1 - $2 )); [ "${d#-}" -le "$3" ]; }
+size_ok() { local x y w h tx ty; read -r x y w h tx ty < <(info) || return 1; near "$w" "$W" 4 && near "$h" "$H" 4; }
+pos_ok()  { local x y w h tx ty; read -r x y w h tx ty < <(info) || return 1; near "$x" "$tx" 8 && near "$y" "$ty" 8; }
+try() {   # try <name> <hyprctl dispatch args...> then check
+  local name="$1" check="$2"; shift 2
+  hyprctl dispatch "$@" >/dev/null 2>&1
+  for _ in 1 2 3 4; do sleep 0.12; if "$check"; then say "$name: ok"; return 0; fi; done
+  say "$name: no effect"; return 1
+}
+
+# wait for the window to exist (the launcher starts this right after it opens)
+for _ in $(seq 1 20); do info >/dev/null 2>&1 && break; sleep 0.2; done
+info >/dev/null 2>&1 || { say "window not found"; exit 0; }
+say "hyprland: $(hyprctl version 2>/dev/null | head -1)"
+say "before: $(info)   wanted: $W x $H"
+
+size_ok || try "resize (lua)" size_ok "hl.dsp.window.resize({ x = $W, y = $H, relative = false, window = \"$SEL\" })" \
+  || try "resize (lua exact)" size_ok "hl.dsp.window.resize({ x = $W, y = $H, exact = true, window = \"$SEL\" })" \
+  || try "resize (classic)" size_ok resizewindowpixel "exact $W $H,$SEL" \
+  || say "could not resize"
+
+read -r X Y _ _ TX TY < <(info) && {
+  pos_ok || try "center (lua)" pos_ok "hl.dsp.window.center({ window = \"$SEL\" })" \
+    || try "move (lua)" pos_ok "hl.dsp.window.move({ x = $TX, y = $TY, relative = false, window = \"$SEL\" })" \
+    || try "move (classic)" pos_ok movewindowpixel "exact $TX $TY,$SEL" \
+    || say "could not center"
+}
+say "after: $(info)"
+exit 0

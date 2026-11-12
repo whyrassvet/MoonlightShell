@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""rice-colors: color schemes for the whole rice (Settings > Home > Colors).
+
+  rice-colors get            current scheme key
+  rice-colors mode KEY       set the scheme and re-apply it to the current wallpaper
+  rice-colors list           JSON list of schemes for the settings app
+  rice-colors scheme KEY     "matugen-type seed-color ws-active" (used by hyprquickpaper/commands.sh)
+  rice-colors refresh        re-color notifications and the lock screen after a theme change
+"""
+import json
+import os
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+MODE = HOME + "/.config/rice/color-mode"
+CURRENT = HOME + "/.cache/hyprquickpaper-current"
+APPLY = HOME + "/.config/quickshell/hyprquickpaper/commands.sh"
+
+G = "#8a8a8a"   # workspace marker on grey themes
+A = "@on_accent"
+
+# key, name, kind, matugen type, seed, ws marker, preview [surface, accent, text]
+# entries without a matugen type (auto, grey, navy) are handled by hyprquickpaper/commands.sh itself
+SCHEMES = [
+    ("auto",   "Auto",    "dynamic", "",                 "",        A, ["#1a1a1a", "#c9b68a", "#f6f5f4"]),
+    ("grey",   "Grey",    "dynamic", "",                 "",        G, ["#161616", "#8a8a8a", "#e0e0e0"]),
+    ("navy",   "Navy",    "color", "",                 "",        A, ["#0b1020", "#4a6ad0", "#e6e9f5"]),
+    # monochrome and near-monochrome
+    ("mono",   "Mono",    "mono",   "scheme-monochrome", "#808080", G, ["#111111", "#d4d4d4", "#ffffff"]),
+    ("slate",  "Slate",   "mono",   "scheme-neutral",    "#5f6b7a", G, ["#12151a", "#9aa6b5", "#e4e8ee"]),
+    ("stone",  "Stone",   "mono",   "scheme-neutral",    "#7a6f66", G, ["#16130f", "#b8aa9c", "#eee8e0"]),
+    ("steel",  "Steel",   "mono",   "scheme-neutral",    "#6a7f8f", G, ["#101518", "#8fa8b8", "#e2eaf0"]),
+    ("ash",    "Ash",     "mono",   "scheme-neutral",    "#8a8a8a", G, ["#141414", "#a8a8a8", "#ececec"]),
+    ("ink",    "Ink",     "mono",   "scheme-neutral",    "#202020", G, ["#050505", "#707070", "#d0d0d0"]),
+    # colors
+    ("ocean",  "Ocean",   "color",  "scheme-tonal-spot", "#0a84c8", A, ["#08121c", "#4db5f0", "#e4f2fb"]),
+    ("sky",    "Sky",     "color",  "scheme-tonal-spot", "#4aa8ff", A, ["#0b1420", "#7fc0ff", "#e6f1ff"]),
+    ("teal",   "Teal",    "color",  "scheme-tonal-spot", "#00897b", A, ["#08171a", "#3cc7b6", "#dff5f2"]),
+    ("mint",   "Mint",    "color",  "scheme-tonal-spot", "#3ddc97", A, ["#08150f", "#5fe3a8", "#e0f8ec"]),
+    ("forest", "Forest",  "color",  "scheme-tonal-spot", "#2e7d32", A, ["#0b140b", "#6fbf73", "#e3f2e4"]),
+    ("lime",   "Lime",    "color",  "scheme-tonal-spot", "#9acd32", A, ["#12150a", "#b5d85a", "#eef5d8"]),
+    ("gold",   "Gold",    "color",  "scheme-tonal-spot", "#d4a017", A, ["#17120a", "#e6b84a", "#f8efd8"]),
+    ("sunset", "Sunset",  "color",  "scheme-tonal-spot", "#ff7a45", A, ["#1a0f0a", "#ff9a6b", "#ffe9df"]),
+    ("ember",  "Ember",   "color",  "scheme-tonal-spot", "#e53935", A, ["#1a0a0a", "#ff6a63", "#ffe3e1"]),
+    ("rose",   "Rose",    "color",  "scheme-tonal-spot", "#ec6a8c", A, ["#1a0e12", "#f48fa8", "#ffe4ea"]),
+    ("orchid", "Orchid",  "color",  "scheme-tonal-spot", "#9b8cff", A, ["#100e1c", "#b5a9ff", "#ece9ff"]),
+    ("violet", "Violet",  "color",  "scheme-tonal-spot", "#7e57c2", A, ["#120d1c", "#a58bdc", "#ece4f7"]),
+]
+BY_KEY = {s[0]: s for s in SCHEMES}
+
+
+def current():
+    try:
+        v = open(MODE).read().strip()
+    except Exception:
+        return "auto"
+    return v if v in BY_KEY else "auto"
+
+
+def reapply():
+    try:
+        cur = open(CURRENT).read().strip()
+    except Exception:
+        return
+    if cur and os.path.isfile(cur) and os.path.isfile(APPLY):
+        subprocess.run(["bash", APPLY, cur])
+
+
+def refresh():
+    for tool in ("rice-notify", "rice-lock"):
+        p = HOME + "/.local/bin/" + tool
+        if os.access(p, os.X_OK):
+            subprocess.run([p, "apply"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # your apps (VSCodium / VS Code, Discord) take the new colors too
+    p = HOME + "/.local/bin/rice-theme"
+    if os.access(p, os.X_OK):
+        subprocess.Popen([p, "sync"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "get":
+        print(current())
+    elif cmd == "list":
+        print(json.dumps([{"key": s[0], "name": s[1], "kind": s[2], "preview": s[6]} for s in SCHEMES]))
+    elif cmd == "scheme":
+        s = BY_KEY.get(argv[2] if len(argv) > 2 else "")
+        if not s or not s[3]:
+            sys.exit(1)
+        print(s[3], s[4], s[5])
+    elif cmd == "mode":
+        k = argv[2] if len(argv) > 2 else "auto"
+        if k not in BY_KEY:
+            sys.stderr.write("unknown scheme: %s\n" % k)
+            sys.exit(1)
+        os.makedirs(os.path.dirname(MODE), exist_ok=True)
+        with open(MODE, "w") as f:
+            f.write(k + "\n")
+        if os.path.isfile(APPLY):
+            reapply()          # commands.sh calls "rice-colors refresh" when it is done
+        else:
+            refresh()
+    elif cmd == "refresh":
+        refresh()
+    else:
+        sys.stderr.write(__doc__)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

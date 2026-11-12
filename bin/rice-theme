@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""rice-theme: whole-desktop themes, and your colors in your apps (Settings > Appearance > Themes).
+
+A theme is a color scheme and a design: corners, shapes, the bar, the widgets, notifications, window corners and
+gaps, motion and the font. Your apps take the colors too: VSCodium / VS Code and Discord (Vesktop, Vencord,
+Equicord, BetterDiscord), every time the colors change (a new wallpaper, another scheme).
+
+  rice-theme list              the themes (JSON)
+  rice-theme state             the theme you have and the apps it colors (JSON)
+  rice-theme apply KEY         use a theme
+  rice-theme app vscode|discord on|off
+  rice-theme sync              color the apps again from your colors now (matugen calls it)
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CONF = DIR + "/theme.json"
+PALETTE = DIR + "/palette.json"
+APPPREFS = DIR + "/settings-app.json"
+BIN = HOME + "/.local/bin/"
+XDG = os.environ.get("XDG_CONFIG_HOME") or HOME + "/.config"
+FLAT = HOME + "/.var/app"
+UI_FONT = "Google Sans Flex"
+MONO_FONT = "JetBrainsMono Nerd Font"
+
+# key: name, what it is like, colors (rice-colors), and the design
+THEMES = {
+    "darkshadow": {
+        "name": "DarkShadow", "desc": "The shell as it comes: your wallpaper's colors, soft shapes, a living island",
+        "colors": "auto", "corners": 1.0, "shape": "verysunny", "wavy": True, "motion": "expressive", "bounce": 1.0,
+        "bar": "dynamic", "bar_opacity": 0.72, "widgets": "shadow", "notify": "glass", "notify_radius": 18,
+        "rounding": 9, "gaps_in": 4, "gaps_out": 6, "border": 2, "font": UI_FONT,
+        "preview": ["#101014", "#c9b68a", "#e8e4dc"]},
+    "terminal": {
+        "name": "Terminal", "desc": "Sharp corners, one monospace font, no bounce: calm and dense",
+        "colors": "ink", "corners": 0.3, "shape": "square", "wavy": False, "motion": "standard", "bounce": 0.0,
+        "bar": "flat", "bar_opacity": 0.95, "widgets": "outline", "notify": "outline", "notify_radius": 4,
+        "rounding": 0, "gaps_in": 2, "gaps_out": 4, "border": 1, "font": MONO_FONT,
+        "preview": ["#050505", "#9a9a9a", "#d0d0d0"]},
+    "glass": {
+        "name": "Glass", "desc": "See-through floating islands, big round corners, wide gaps",
+        "colors": "auto", "corners": 1.35, "shape": "cookie12", "wavy": True, "motion": "expressive", "bounce": 1.2,
+        "bar": "islands", "bar_opacity": 0.45, "widgets": "shadow", "notify": "glass", "notify_radius": 24,
+        "rounding": 16, "gaps_in": 6, "gaps_out": 14, "border": 1, "font": UI_FONT,
+        "preview": ["#1b2230", "#9fc4ff", "#eef3ff"]},
+    "neon": {
+        "name": "Neon", "desc": "Outlines that glow in violet, angled shapes, pills on the bar",
+        "colors": "orchid", "corners": 0.6, "shape": "diamond", "wavy": False, "motion": "expressive", "bounce": 0.6,
+        "bar": "pills", "bar_opacity": 0.8, "widgets": "outline", "notify": "outline", "notify_radius": 10,
+        "rounding": 6, "gaps_in": 5, "gaps_out": 10, "border": 2, "font": UI_FONT,
+        "preview": ["#100e1c", "#b5a9ff", "#ece9ff"]},
+    "ember": {
+        "name": "Ember", "desc": "Warm reds on near black, solid cards, a bold island",
+        "colors": "ember", "corners": 0.8, "shape": "burst", "wavy": True, "motion": "expressive", "bounce": 0.8,
+        "bar": "island", "bar_opacity": 0.85, "widgets": "shadow", "notify": "solid", "notify_radius": 14,
+        "rounding": 8, "gaps_in": 4, "gaps_out": 8, "border": 2, "font": UI_FONT,
+        "preview": ["#1a0a0a", "#ff6a63", "#ffe3e1"]},
+    "frost": {
+        "name": "Frost", "desc": "Cool steel blues, frosted panels, gentle motion",
+        "colors": "steel", "corners": 1.1, "shape": "flower", "wavy": True, "motion": "standard", "bounce": 0.5,
+        "bar": "dynamic", "bar_opacity": 0.6, "widgets": "shadow", "notify": "glass", "notify_radius": 20,
+        "rounding": 12, "gaps_in": 5, "gaps_out": 10, "border": 1, "font": UI_FONT,
+        "preview": ["#101518", "#8fa8b8", "#e2eaf0"]},
+}
+ORDER = ["darkshadow", "terminal", "glass", "neon", "ember", "frost"]
+
+
+def load():
+    c = {"theme": "darkshadow", "apps": {"vscode": True, "discord": True}}
+    try:
+        j = json.load(open(CONF))
+        c["theme"] = j.get("theme", c["theme"])
+        c["apps"].update(j.get("apps") or {})
+        if j.get("font_was"):
+            c["font_was"] = j["font_was"]
+    except Exception:
+        pass
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CONF + ".tmp"
+    json.dump(c, open(tmp, "w"), indent=2)
+    os.replace(tmp, CONF)
+
+
+def run(args, t=60):
+    try:
+        return subprocess.run(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=t).returncode == 0
+    except Exception:
+        return False
+
+
+def tool(name, *args, t=60):
+    p = BIN + name
+    if os.access(p, os.X_OK):
+        return run([p] + [str(a) for a in args], t)
+    return False
+
+
+# ---------------- the palette ----------------
+def hexok(v):
+    return isinstance(v, str) and re.match(r"^#[0-9a-fA-F]{6}$", v) is not None
+
+
+def mix(a, b, t):
+    a, b = a.lstrip("#"), b.lstrip("#")
+    return "#" + "".join("%02x" % round(int(a[i:i + 2], 16) * (1 - t) + int(b[i:i + 2], 16) * t) for i in (0, 2, 4))
+
+
+def palette():
+    """the colors matugen made (palette.json); without it: kitty's theme and the bar's accent"""
+    try:
+        p = json.load(open(PALETTE))
+        if all(hexok(p.get(k)) for k in ("surface", "on_surface", "primary")):
+            return p
+    except Exception:
+        pass
+    k = {}
+    try:
+        for line in open(HOME + "/.config/kitty/current-theme.conf"):
+            m = re.match(r"^\s*(\w+)\s+(#[0-9a-fA-F]{6})", line)
+            if m:
+                k[m.group(1)] = m.group(2)
+    except OSError:
+        pass
+    acc = k.get("selection_background") or "#9ec9bd"
+    try:
+        m = re.search(r"@define-color accent (#[0-9a-fA-F]{6})", open(HOME + "/.config/waybar/colors.css").read())
+        if m and "selection_background" not in k:
+            acc = m.group(1)
+    except OSError:
+        pass
+    bg, fg = k.get("background", "#121214"), k.get("foreground", "#e6e1e5")
+    return {"surface": bg, "surface_low": mix(bg, fg, 0.03), "surface_container": mix(bg, fg, 0.06),
+            "surface_high": mix(bg, fg, 0.10), "surface_highest": mix(bg, fg, 0.15), "on_surface": fg,
+            "on_surface_variant": mix(fg, bg, 0.3), "outline": k.get("color8", mix(fg, bg, 0.55)),
+            "outline_variant": mix(fg, bg, 0.75), "primary": acc, "on_primary": k.get("selection_foreground", bg),
+            "primary_container": mix(acc, bg, 0.6), "on_primary_container": mix(acc, fg, 0.7),
+            "secondary": k.get("color4", acc), "secondary_container": mix(acc, bg, 0.75),
+            "tertiary": k.get("color2", acc), "error": k.get("color1", "#ffb4ab")}
+
+
+# ---------------- VSCodium / VS Code ----------------
+def vscode_files():
+    out = []
+    for d in ("VSCodium", "Code", "Code - OSS", "Code - Insiders", "Cursor"):
+        if os.path.isdir(XDG + "/" + d):
+            out.append(XDG + "/" + d + "/User/settings.json")
+    for app, d in (("com.vscodium.codium", "VSCodium"), ("com.visualstudio.code", "Code")):
+        base = FLAT + "/" + app + "/config/" + d
+        if os.path.isdir(base):
+            out.append(base + "/User/settings.json")
+    return out
+
+
+def jsonc(text):
+    """JSON with comments and trailing commas (VS Code's settings.json) -> dict"""
+    out, i, n, s = [], 0, len(text), False
+    while i < n:
+        ch = text[i]
+        if s:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                s = False
+            i += 1
+            continue
+        if ch == '"':
+            s = True
+            out.append(ch)
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(ch)
+            i += 1
+    clean = re.sub(r",(\s*[}\]])", r"\1", "".join(out))
+    return json.loads(clean) if clean.strip() else {}
+
+
+def vscode_colors(p):
+    bg, bg2, bg3, bg4 = p["surface"], p.get("surface_container", p["surface"]), p.get("surface_high", p["surface"]), p.get("surface_highest", p["surface"])
+    fg, dim, acc, onacc = p["on_surface"], p.get("on_surface_variant", p["on_surface"]), p["primary"], p.get("on_primary", p["surface"])
+    accc, onaccc = p.get("primary_container", acc), p.get("on_primary_container", fg)
+    line, err = p.get("outline_variant", bg4), p.get("error", "#ffb4ab")
+    return {
+        "editor.background": bg, "editor.foreground": fg, "editorCursor.foreground": acc,
+        "editorLineNumber.foreground": p.get("outline", dim), "editorLineNumber.activeForeground": acc,
+        "editor.selectionBackground": acc + "44", "editor.lineHighlightBackground": bg3 + "88",
+        "editor.findMatchBackground": acc + "66", "editorIndentGuide.background1": line + "88",
+        "editorWidget.background": bg2, "editorGroupHeader.tabsBackground": bg2, "editorGroup.border": line,
+        "sideBar.background": bg2, "sideBar.foreground": dim, "sideBarSectionHeader.background": bg2,
+        "sideBarTitle.foreground": fg, "sideBar.border": bg2,
+        "activityBar.background": bg2, "activityBar.foreground": acc, "activityBar.inactiveForeground": dim,
+        "activityBar.border": bg2, "activityBarBadge.background": acc, "activityBarBadge.foreground": onacc,
+        "titleBar.activeBackground": bg2, "titleBar.activeForeground": fg, "titleBar.inactiveBackground": bg2,
+        "titleBar.inactiveForeground": dim, "titleBar.border": bg2,
+        "statusBar.background": bg2, "statusBar.foreground": dim, "statusBar.border": bg2,
+        "statusBarItem.remoteBackground": acc, "statusBarItem.remoteForeground": onacc,
+        "statusBar.debuggingBackground": err, "statusBar.noFolderBackground": bg2,
+        "tab.activeBackground": bg, "tab.inactiveBackground": bg2, "tab.activeForeground": fg,
+        "tab.inactiveForeground": dim, "tab.activeBorderTop": acc, "tab.border": bg2,
+        "panel.background": bg2, "panel.border": line, "panelTitle.activeBorder": acc, "panelTitle.activeForeground": fg,
+        "terminal.background": bg2, "terminal.foreground": fg, "terminalCursor.foreground": acc,
+        "button.background": acc, "button.foreground": onacc, "button.hoverBackground": accc,
+        "focusBorder": acc + "aa", "textLink.foreground": acc, "progressBar.background": acc,
+        "badge.background": acc, "badge.foreground": onacc,
+        "list.activeSelectionBackground": accc, "list.activeSelectionForeground": onaccc,
+        "list.inactiveSelectionBackground": bg3, "list.hoverBackground": bg3, "list.focusOutline": acc + "88",
+        "input.background": bg3, "input.foreground": fg, "input.border": line, "dropdown.background": bg3,
+        "quickInput.background": bg2, "quickInputList.focusBackground": accc, "menu.background": bg2,
+        "menu.foreground": fg, "menu.selectionBackground": accc, "menu.selectionForeground": onaccc,
+        "scrollbarSlider.background": line + "66", "scrollbarSlider.hoverBackground": line + "aa",
+        "notifications.background": bg3, "editorSuggestWidget.background": bg2,
+        "editorSuggestWidget.selectedBackground": accc, "breadcrumb.background": bg,
+    }
+
+
+def vscode(on, p):
+    done, failed = [], []
+    for f in vscode_files():
+        try:
+            text = open(f).read() if os.path.isfile(f) else "{}"
+            j = jsonc(text)
+        except Exception:
+            failed.append(f)
+            continue
+        if not isinstance(j, dict):
+            failed.append(f)
+            continue
+        cc = j.get("workbench.colorCustomizations")
+        cc = dict(cc) if isinstance(cc, dict) else {}
+        ours = j.get("darkshadow.colorKeys") or []
+        saved = j.get("darkshadow.yourColors") or {}
+        for k in ours:            # what we set last time goes first (your own colors stay)
+            cc.pop(k, None)
+        if on:
+            new = vscode_colors(p)
+            # colors you had set yourself: kept aside, and given back when this is turned off
+            for k in new:
+                if k in cc:
+                    saved[k] = cc[k]
+            cc.update(new)
+            j["darkshadow.colorKeys"] = sorted(new)
+            if saved:
+                j["darkshadow.yourColors"] = saved
+        else:
+            cc.update(saved)
+            j.pop("darkshadow.colorKeys", None)
+            j.pop("darkshadow.yourColors", None)
+        if cc:
+            j["workbench.colorCustomizations"] = cc
+        else:
+            j.pop("workbench.colorCustomizations", None)
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        bak = f + ".before-darkshadow"
+        if os.path.isfile(f) and not os.path.exists(bak) and ("//" in text or "/*" in text):
+            shutil.copy(f, bak)   # it had comments: your file as it was stays next to it
+        tmp = f + ".tmp"
+        json.dump(j, open(tmp, "w"), indent=4)
+        os.replace(tmp, f)
+        done.append(f)
+    return done, failed
+
+
+# ---------------- Discord ----------------
+CSS_NAME = "darkshadow.theme.css"
+
+
+def discord_dirs():
+    """[(themes folder, settings.json of the client or None, kind)]"""
+    out = []
+    for d, kind in (("Vencord", "vencord"), ("vesktop", "vencord"), ("Equicord", "vencord"), ("equibop", "vencord"),
+                    ("BetterDiscord", "bd")):
+        for base in (XDG + "/" + d, FLAT + "/dev.vencord.Vesktop/config/" + d):
+            if os.path.isdir(base):
+                if kind == "vencord":
+                    out.append((base + "/themes", base + "/settings/settings.json", kind))
+                else:
+                    out.append((base + "/themes", base + "/data/stable/themes.json", kind))
+    return out
+
+
+def discord_css(p):
+    bg, bg2, bg3, bg4 = p["surface"], p.get("surface_container", p["surface"]), p.get("surface_high", p["surface"]), p.get("surface_highest", p["surface"])
+    low = p.get("surface_low", bg)
+    fg, dim, acc, onacc = p["on_surface"], p.get("on_surface_variant", p["on_surface"]), p["primary"], p.get("on_primary", p["surface"])
+    line = p.get("outline_variant", bg4)
+    v = {
+        # the newer Discord (visual refresh)
+        "--background-base-lowest": low, "--background-base-lower": bg, "--background-base-low": bg2,
+        "--background-surface-high": bg3, "--background-surface-higher": bg4, "--background-surface-highest": bg4,
+        "--chat-background-default": bg, "--bg-base-primary": bg, "--bg-base-secondary": bg2, "--bg-base-tertiary": low,
+        "--text-default": fg, "--text-strong": fg, "--text-subtle": dim, "--text-link": acc,
+        "--border-subtle": line, "--border-normal": line,
+        # the older names (some clients and themes still use them)
+        "--background-primary": bg, "--background-secondary": bg2, "--background-secondary-alt": bg3,
+        "--background-tertiary": low, "--background-floating": bg3, "--background-nested-floating": bg3,
+        "--background-accent": acc, "--background-modifier-hover": bg3 + "99",
+        "--background-modifier-active": bg4 + "aa", "--background-modifier-selected": bg4 + "cc",
+        "--channeltextarea-background": bg3, "--modal-background": bg2, "--modal-footer-background": bg2,
+        "--input-background": bg3, "--deprecated-card-bg": bg2, "--home-background": bg, "--bg-overlay-chat": bg,
+        "--text-normal": fg, "--text-muted": dim, "--header-primary": fg, "--header-secondary": dim,
+        "--channels-default": dim, "--interactive-normal": dim, "--interactive-hover": fg,
+        "--interactive-active": fg, "--interactive-muted": line,
+        "--brand-500": acc, "--brand-560": acc, "--brand-experiment": acc, "--brand-experiment-560": acc,
+        "--button-filled-brand-background": acc, "--button-filled-brand-text": onacc,
+        "--scrollbar-auto-thumb": line, "--scrollbar-thin-thumb": line,
+    }
+    body = "\n".join("    %s: %s !important;" % kv for kv in v.items())
+    return ("/**\n * @name DarkShadow\n * @author DarkShadow's Shell\n * @description Your desktop's colors "
+            "(made by rice-theme; it changes with your wallpaper)\n * @version 1.0.0\n */\n\n"
+            ":root, .theme-dark, .theme-darker, .theme-midnight, .visual-refresh.theme-dark {\n" + body + "\n}\n"
+            "::selection { background: %s66; }\n" % acc)
+
+
+def discord(on, p):
+    done = []
+    css = discord_css(p)
+    for themes, settings, kind in discord_dirs():
+        f = themes + "/" + CSS_NAME
+        try:
+            if on:
+                os.makedirs(themes, exist_ok=True)
+                open(f, "w").write(css)
+            elif os.path.exists(f):
+                os.remove(f)
+        except OSError:
+            continue
+        # turned on (or off) in the client
+        try:
+            j = json.load(open(settings)) if os.path.isfile(settings) else None
+        except Exception:
+            j = None
+        if isinstance(j, dict):
+            if kind == "vencord":
+                l = [x for x in (j.get("enabledThemes") or []) if x != CSS_NAME]
+                if on:
+                    l.append(CSS_NAME)
+                j["enabledThemes"] = l
+            else:
+                j["DarkShadow"] = on
+            try:
+                os.makedirs(os.path.dirname(settings), exist_ok=True)
+                tmp = settings + ".tmp"
+                json.dump(j, open(tmp, "w"), indent=4)
+                os.replace(tmp, settings)
+            except OSError:
+                pass
+        done.append(themes)
+    return done
+
+
+# ---------------- the theme ----------------
+def set_prefs(kv):
+    try:
+        d = json.load(open(APPPREFS))
+    except Exception:
+        d = {}
+    d.update(kv)
+    os.makedirs(DIR, exist_ok=True)
+    tmp = APPPREFS + ".tmp"
+    json.dump(d, open(tmp, "w"))
+    os.replace(tmp, APPPREFS)
+
+
+def apply(key):
+    t = THEMES[key]
+    c = load()
+    c["theme"] = key
+    save(c)
+    # Settings and the desktop shell (they read settings-app.json)
+    set_prefs({"cornerScale": t["corners"], "accentShape": t["shape"], "wavy": t["wavy"], "motion": t["motion"],
+               "bounce": t["bounce"]})
+    tool("desktop-set", "widgets-theme", t["widgets"])
+    tool("rice-bar", "set", "style", t["bar"])
+    tool("rice-bar", "set", "opacity", t["bar_opacity"])
+    tool("rice-notify", "set", "style", t["notify"])
+    tool("rice-notify", "set", "radius", t["notify_radius"])
+    # windows (Hyprland; niri reads the same values from rice-niri)
+    tool("hypr-set", "set", "decoration.rounding", t["rounding"])
+    tool("hypr-set", "set", "general.gaps_in", t["gaps_in"])
+    tool("hypr-set", "set", "general.gaps_out", t["gaps_out"])
+    tool("hypr-set", "set", "general.border_size", t["border"])
+    if os.environ.get("NIRI_SOCKET"):
+        tool("rice-niri", "apply")
+    # the font: only the monospace theme changes it (and gives yours back when you leave it)
+    if t["font"] == MONO_FONT and not c.get("font_was"):
+        try:
+            f = json.load(open(DIR + "/fonts.json"))
+        except Exception:
+            f = {}
+        c["font_was"] = {"main": f.get("main") or UI_FONT, "title": f.get("title") or UI_FONT}
+        tool("font-set", "set", "main", MONO_FONT)
+        tool("font-set", "set", "title", MONO_FONT)
+    elif t["font"] != MONO_FONT and c.get("font_was"):
+        tool("font-set", "set", "main", c["font_was"]["main"])
+        tool("font-set", "set", "title", c["font_was"]["title"])
+        c.pop("font_was")
+    save(c)
+    # the colors last: the wallpaper's colors are made again, and the apps follow (sync)
+    tool("rice-colors", "mode", t["colors"], t=180)
+    sync()
+
+
+def sync():
+    c = load()
+    p = palette()
+    a = c["apps"]
+    v, bad = vscode(a.get("vscode", True), p) if vscode_files() else ([], [])
+    d = discord(a.get("discord", True), p) if discord_dirs() else []
+    return v, bad, d
+
+
+def state():
+    c = load()
+    print(json.dumps({"theme": c["theme"], "apps": c["apps"],
+                      "found": {"vscode": [os.path.dirname(os.path.dirname(f)).replace(HOME, "~") for f in vscode_files()],
+                                "discord": [os.path.dirname(t).replace(HOME, "~") for t, _, _ in discord_dirs()]},
+                      "palette": palette()}))
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else ""
+    arg = a[2] if len(a) > 2 else ""
+    if cmd == "list":
+        print(json.dumps({"current": load()["theme"],
+                          "themes": [dict(THEMES[k], key=k) for k in ORDER]}))
+    elif cmd == "state":
+        state()
+    elif cmd == "apply" and arg in THEMES:
+        apply(arg)
+    elif cmd == "app" and arg in ("vscode", "discord") and len(a) > 3 and a[3] in ("on", "off"):
+        c = load()
+        c["apps"][arg] = a[3] == "on"
+        save(c)
+        p = palette()
+        if arg == "vscode":
+            done, bad = vscode(c["apps"][arg], p)
+            if bad:
+                sys.exit("rice-theme: could not read " + ", ".join(bad))
+        else:
+            discord(c["apps"][arg], p)
+    elif cmd == "sync":
+        v, bad, d = sync()
+        print("VSCodium / VS Code: %d, Discord: %d%s" % (len(v), len(d), (" (could not read: " + ", ".join(bad) + ")") if bad else ""))
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

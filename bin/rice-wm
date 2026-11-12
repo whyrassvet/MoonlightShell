@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""rice-wm: which window manager runs DarkShadow's Shell (Hyprland or niri), and the few things the shell asks it.
+
+  rice-wm                          hyprland | niri | none
+  rice-wm label                    Hyprland | niri
+  rice-wm version                  "Hyprland 0.56.2" / "niri 26.04"
+  rice-wm workspace N|e+1|e-1      go to workspace N (the next / previous one)
+  rice-wm move-to N                move the focused window to workspace N
+  rice-wm dpms off|on              screens off / on (hypridle)
+  rice-wm exit                     log out (leave the window manager)
+  rice-wm reload                   read the config again (niri: rice-niri writes it again, niri reloads it)
+  rice-wm monitors                 JSON: [{name, width, height, x, y, pw, ph, scale, rate, focused}]
+                                   (width/height: logical size, pw/ph: pixels)
+  rice-wm window TITLE             "MONITOR x y w h" of the window with this title (relative to its monitor)
+  rice-wm kbd-next                 next keyboard layout
+  rice-wm kbd                      JSON: {names: [...], active: "Polish"}
+
+Scripts and the Quickshell apps call this, so each of them works on both window managers.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+BIN = HOME + "/.local/bin"
+
+
+def detect():
+    """niri or hyprland: from the environment the compositor gives its programs, else from what runs"""
+    run = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    sock = os.environ.get("NIRI_SOCKET", "")
+    if sock and os.path.exists(sock):
+        return "niri"
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    if sig and os.path.isdir("%s/hypr/%s" % (run, sig)):
+        return "hyprland"
+    cur = (os.environ.get("XDG_CURRENT_DESKTOP", "") + ":" + os.environ.get("XDG_SESSION_DESKTOP", "")).lower()
+    if "niri" in cur and niri_socket():
+        return "niri"
+    if "hyprland" in cur and shutil.which("hyprctl"):
+        return "hyprland"
+    # started from somewhere else (a TTY, ssh, a systemd unit): what runs now
+    for name, wm in (("niri", "niri"), ("Hyprland", "hyprland"), (".Hyprland-wrapp", "hyprland")):
+        try:
+            if subprocess.run(["pgrep", "-x", name], stdout=subprocess.DEVNULL, timeout=2).returncode == 0:
+                return wm
+        except Exception:
+            pass
+    return "none"
+
+
+def niri_socket():
+    sock = os.environ.get("NIRI_SOCKET", "")
+    if sock and os.path.exists(sock):
+        return sock
+    run = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    try:
+        socks = [os.path.join(run, f) for f in os.listdir(run) if f.startswith("niri.") and f.endswith(".sock")]
+        if socks:
+            return max(socks, key=os.path.getmtime)
+    except Exception:
+        pass
+    return ""
+
+
+def env_niri():
+    e = dict(os.environ)
+    s = niri_socket()
+    if s:
+        e["NIRI_SOCKET"] = s
+    return e
+
+
+def out(cmd, timeout=4):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env_niri() if cmd[0] == "niri" else None)
+        return r.stdout
+    except Exception:
+        return ""
+
+
+def quiet(cmd, timeout=6):
+    try:
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=timeout,
+                              env=env_niri() if cmd[0] == "niri" else None).returncode == 0
+    except Exception:
+        return False
+
+
+def nj(*what):
+    try:
+        return json.loads(out(["niri", "msg", "-j"] + list(what)))
+    except Exception:
+        return None
+
+
+def hj(*what):
+    try:
+        return json.loads(out(["hyprctl", "-j"] + list(what)))
+    except Exception:
+        return None
+
+
+def niri_version():
+    v = out(["niri", "--version"]).strip()          # "niri 26.04 (abc123)"
+    parts = v.split()
+    return parts[1] if len(parts) > 1 else ""
+
+
+def version():
+    wm = detect()
+    if wm == "niri":
+        v = niri_version()
+        return ("niri " + v).strip()
+    if wm == "hyprland":
+        j = hj("version") or {}
+        return ("Hyprland " + str(j.get("tag", "") or "").lstrip("v")).strip()
+    return ""
+
+
+def monitors():
+    wm = detect()
+    res = []
+    if wm == "niri":
+        outs = nj("outputs") or {}
+        foc = (nj("focused-output") or {}).get("name", "")
+        for name, o in (outs.items() if isinstance(outs, dict) else []):
+            lg = o.get("logical")
+            if not lg:
+                continue           # turned off
+            mode = (o.get("modes") or [{}])[o.get("current_mode") or 0] if o.get("modes") else {}
+            res.append({"name": name, "width": lg["width"], "height": lg["height"], "x": lg["x"], "y": lg["y"],
+                        "pw": mode.get("width") or lg["width"], "ph": mode.get("height") or lg["height"],
+                        "scale": lg.get("scale", 1), "rate": round((mode.get("refresh_rate") or 60000) / 1000.0, 2),
+                        "focused": name == foc})
+    elif wm == "hyprland":
+        for m in hj("monitors") or []:
+            sc = m.get("scale") or 1
+            res.append({"name": m["name"], "width": int(m["width"] / sc), "height": int(m["height"] / sc),
+                        "x": m["x"], "y": m["y"], "pw": m["width"], "ph": m["height"], "scale": sc,
+                        "rate": round(m.get("refreshRate", 60), 2), "focused": bool(m.get("focused"))})
+    return res
+
+
+def window_rect(title):
+    wm = detect()
+    if wm == "hyprland":
+        mons = {m.get("id"): m for m in hj("monitors") or []}
+        for c in hj("clients") or []:
+            if c.get("title") == title:
+                m = mons.get(c.get("monitor")) or {}
+                return "%s %d %d %d %d" % (m.get("name", ""), c["at"][0] - m.get("x", 0), c["at"][1] - m.get("y", 0),
+                                           c["size"][0], c["size"][1])
+    elif wm == "niri":
+        wss = {w["id"]: w for w in nj("workspaces") or []}
+        for w in nj("windows") or []:
+            if w.get("title") != title:
+                continue
+            lay = w.get("layout") or {}
+            pos = lay.get("tile_pos_in_workspace_view")
+            if not pos:
+                return ""
+            off = lay.get("window_offset_in_tile") or (0, 0)
+            ws = wss.get(w.get("workspace_id")) or {}
+            size = lay.get("window_size") or (0, 0)
+            return "%s %d %d %d %d" % (ws.get("output") or "", pos[0] + off[0], pos[1] + off[1], size[0], size[1])
+    return ""
+
+
+def workspace(n):
+    wm = detect()
+    if wm == "niri":
+        if n == "e+1":
+            return quiet(["niri", "msg", "action", "focus-workspace-down"])
+        if n == "e-1":
+            return quiet(["niri", "msg", "action", "focus-workspace-up"])
+        return quiet(["niri", "msg", "action", "focus-workspace", str(n)])
+    if wm == "hyprland":
+        return quiet(["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "%s" })' % n]) or \
+            quiet(["hyprctl", "dispatch", "workspace", str(n)])
+    return False
+
+
+def move_to(n):
+    wm = detect()
+    if wm == "niri":
+        return quiet(["niri", "msg", "action", "move-window-to-workspace", str(n)])
+    if wm == "hyprland":
+        return quiet(["hyprctl", "dispatch", 'hl.dsp.window.move({ workspace = "%s" })' % n]) or \
+            quiet(["hyprctl", "dispatch", "movetoworkspace", str(n)])
+    return False
+
+
+def dpms(state):
+    wm = detect()
+    if wm == "niri":
+        return quiet(["niri", "msg", "action", "power-off-monitors" if state == "off" else "power-on-monitors"])
+    if wm == "hyprland":
+        # Hyprland 0.55 (Lua) and older releases use different dispatcher syntax; try both
+        for cmd in (["hyprctl", "dispatch", "dpms", state],
+                    ["hyprctl", "dispatch", 'hl.dsp.dpms({ action = "%s" })' % state],
+                    ["hyprctl", "dispatch", 'hl.dsp.dpms("%s")' % state]):
+            if out(cmd).strip().lower() == "ok":
+                return True
+    return False
+
+
+def leave():
+    wm = detect()
+    if wm == "niri":
+        return quiet(["niri", "msg", "action", "quit", "--skip-confirmation"])
+    if wm == "hyprland":
+        if shutil.which("hyprshutdown"):
+            return quiet(["hyprshutdown"], timeout=30)
+        return quiet(["hyprctl", "dispatch", "hl.dsp.exit()"]) or quiet(["hyprctl", "dispatch", "exit"])
+    return quiet(["loginctl", "terminate-session", os.environ.get("XDG_SESSION_ID", "self")])
+
+
+def reload():
+    wm = detect()
+    if wm == "niri" or (wm == "none" and os.path.isdir(HOME + "/.config/niri")):
+        # niri reads ~/.config/niri/config.kdl again by itself when it changes
+        if os.access(BIN + "/rice-niri", os.X_OK):
+            return quiet([BIN + "/rice-niri", "apply"], timeout=20)
+        return True
+    if wm == "hyprland":
+        return quiet(["hyprctl", "reload"], timeout=8)
+    return False
+
+
+def kbd():
+    wm = detect()
+    if wm == "niri":
+        j = nj("keyboard-layouts") or {}
+        names = j.get("names") or []
+        i = j.get("current_idx") or 0
+        return {"names": names, "active": names[i] if 0 <= i < len(names) else ""}
+    if wm == "hyprland":
+        for k in (hj("devices") or {}).get("keyboards", []):
+            if k.get("main"):
+                return {"names": [], "active": k.get("active_keymap", "")}
+    return {"names": [], "active": ""}
+
+
+def kbd_next():
+    wm = detect()
+    if wm == "niri":
+        return quiet(["niri", "msg", "action", "switch-layout", "next"])
+    if wm == "hyprland":
+        return quiet(["hyprctl", "switchxkblayout", "all", "next"])
+    return False
+
+
+def main(a):
+    c = a[1] if len(a) > 1 else "name"
+    r = a[2:]
+    if c in ("name", "detect"):
+        print(detect())
+    elif c == "label":
+        print({"niri": "niri", "hyprland": "Hyprland"}.get(detect(), "Wayland"))
+    elif c == "version":
+        print(version())
+    elif c == "niri-version":
+        print(niri_version())
+    elif c == "workspace" and r:
+        sys.exit(0 if workspace(r[0]) else 1)
+    elif c == "move-to" and r:
+        sys.exit(0 if move_to(r[0]) else 1)
+    elif c == "dpms" and r and r[0] in ("on", "off"):
+        sys.exit(0 if dpms(r[0]) else 1)
+    elif c == "exit":
+        sys.exit(0 if leave() else 1)
+    elif c == "reload":
+        sys.exit(0 if reload() else 1)
+    elif c == "monitors":
+        print(json.dumps(monitors()))
+    elif c == "window" and r:
+        s = window_rect(" ".join(r))
+        if not s:
+            sys.exit(1)
+        print(s)
+    elif c == "kbd":
+        print(json.dumps(kbd()))
+    elif c == "kbd-next":
+        sys.exit(0 if kbd_next() else 1)
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

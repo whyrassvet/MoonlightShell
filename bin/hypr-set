@@ -1,0 +1,1037 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+ST = DIR + "/hypr.json"
+OUT = HOME + "/.config/hypr/rice-settings.lua"
+MAIN = HOME + "/.config/hypr/hyprland.lua"
+PREV = DIR + "/monitor-prev.json"
+FLAG = DIR + "/border-custom"
+BIN = HOME + "/.local/bin"
+# niri runs the shell: the same settings are written into niri's config (rice-niri) instead of sent to Hyprland
+NIRI = bool(os.environ.get("NIRI_SOCKET")) or (
+    not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE") and "niri" in os.environ.get("XDG_CURRENT_DESKTOP", "").lower())
+# what niri starts with when nothing was changed yet (the values of the shell's Hyprland config)
+NIRI_DEFAULTS = {
+    "general.gaps_in": 4, "general.gaps_out": 6, "general.border_size": 2, "decoration.rounding": 9,
+    "decoration.active_opacity": 1.0, "decoration.inactive_opacity": 1.0, "decoration.shadow.enabled": False,
+    "decoration.shadow.range": 12, "decoration.blur.enabled": True, "decoration.blur.size": 8,
+    "decoration.blur.passes": 3, "decoration.blur.noise": 0.0, "decoration.blur.vibrancy": 0.17,
+    "input.sensitivity": 0.0, "input.natural_scroll": False, "input.touchpad.natural_scroll": True,
+    "input.touchpad.tap-to-click": True, "input.scroll_factor": 1.0, "input.touchpad.scroll_factor": 1.0,
+}
+
+
+def niri_apply():
+    try:
+        subprocess.run([BIN + "/rice-niri", "apply"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    except Exception:
+        pass
+
+SPEC = {
+    "general.gaps_in": ("int", 0, 60),
+    "general.gaps_out": ("int", 0, 100),
+    "general.gaps_workspaces": ("int", 0, 100),
+    "general.border_size": ("int", 0, 12),
+    "general.resize_on_border": ("bool",),
+    "general.extend_border_grab_area": ("int", 0, 60),
+    "general.hover_icon_on_border": ("bool",),
+    "general.layout": ("str", ["dwindle", "master", "scrolling", "monocle"]),
+    "dwindle.preserve_split": ("bool",),
+    # Settings > Hyprland > Layout: floating windows snap to each other and to the screen edges (magnet)
+    "general.snap.enabled": ("bool",),
+    "general.snap.window_gap": ("int", 0, 60),
+    "general.snap.monitor_gap": ("int", 0, 60),
+    "general.snap.border_overlap": ("bool",),
+    "decoration.rounding": ("int", 0, 40),
+    "decoration.rounding_power": ("float", 2.0, 10.0),
+    "decoration.active_opacity": ("float", 0.1, 1.0),
+    "decoration.inactive_opacity": ("float", 0.1, 1.0),
+    "decoration.dim_inactive": ("bool",),
+    "decoration.dim_strength": ("float", 0.0, 1.0),
+    "decoration.shadow.enabled": ("bool",),
+    "decoration.shadow.range": ("int", 0, 60),
+    "decoration.shadow.render_power": ("int", 1, 4),
+    "decoration.blur.enabled": ("bool",),
+    "decoration.blur.size": ("int", 1, 30),
+    "decoration.blur.passes": ("int", 1, 8),
+    "decoration.blur.noise": ("float", 0.0, 0.5),
+    "decoration.blur.contrast": ("float", 0.0, 2.0),
+    "decoration.blur.brightness": ("float", 0.0, 2.0),
+    "decoration.blur.vibrancy": ("float", 0.0, 1.0),
+    "decoration.blur.vibrancy_darkness": ("float", 0.0, 1.0),
+    "decoration.blur.xray": ("bool",),
+    "decoration.blur.ignore_opacity": ("bool",),
+    "decoration.blur.new_optimizations": ("bool",),
+    "decoration.blur.popups": ("bool",),
+    # Settings > Home > Settings: mouse and touchpad
+    "input.scroll_factor": ("float", 0.2, 3.0),
+    "input.touchpad.scroll_factor": ("float", 0.2, 3.0),
+    "input.natural_scroll": ("bool",),
+    "input.touchpad.natural_scroll": ("bool",),
+    "input.touchpad.tap-to-click": ("bool",),
+    "input.sensitivity": ("float", -1.0, 1.0),
+}
+
+# (leaf, speed, bezier, style) - wartości z twojego hyprland.lua
+ANIMS = [
+    ("windows", 4, "smooth", "popin 95%"),
+    ("windowsIn", 4, "smooth", "popin 85%"),
+    ("windowsOut", 3, "quick", "popin 90%"),
+    ("windowsMove", 3, "quick", None),
+    ("workspaces", 5, "smooth", "slidefade 20%"),
+    ("specialWorkspace", 3, "smooth", "slidefadevert 5%"),
+    ("layers", 3, "quick", "fade"),
+    ("layersIn", 3, "quick", "popin 95%"),
+    ("layersOut", 3, "quick", "popin 95%"),
+    ("fadeLayersIn", 3, "linearish", None),
+    ("fadeLayersOut", 3, "linearish", None),
+    ("fade", 4, "smooth", None),
+]
+
+MODS = [(64, "SUPER"), (4, "CTRL"), (8, "ALT"), (1, "SHIFT")]
+EXEC = re.compile(r"^(\s*)(--\s*)?(hl\.exec_cmd\(.*\))\s*$")
+
+
+def die(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def sh(cmd):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True)
+    except Exception as e:
+        return str(e)
+    return (r.stdout or "") + (r.stderr or "")
+
+
+def ev(code):
+    if NIRI:
+        return True          # niri: save() already wrote its config, niri loads it by itself
+    out = sh(["hyprctl", "eval", code]).strip()
+    if re.search(r"error|fail", out, re.I):
+        print(out, file=sys.stderr)
+        return False
+    return True
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def lua(v):
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, int):
+        return str(v)
+    if isinstance(v, float):
+        return ("%.3f" % v).rstrip("0").rstrip(".") or "0"
+    return json.dumps(v, ensure_ascii=False)
+
+
+def nest(key, v):
+    s = lua(v)
+    for p in reversed(key.split(".")):
+        name = p if re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", p) else '["%s"]' % p     # tap-to-click is not a Lua name
+        s = "{ %s = %s }" % (name, s)
+    return s
+
+
+def rgba(h):
+    return "rgba(%sff)" % (h or "#ffffff").lstrip("#").lower()
+
+
+def mon_rate(x):
+    return ("%.2f" % float(x)).rstrip("0").rstrip(".")
+
+
+# Motion styles (Settings > Motion). calm = the curves of hyprland.lua; the spring ones use Hyprland's spring curves.
+#   name: (curve definitions, {leaf: (speed, curve kind, curve name, style)})
+SPRINGS = {
+    "ds-soft": (1, 150, 19),        # mass, stiffness, dampening: settles without a wobble
+    "ds-lively": (1, 190, 15),      # a small overshoot
+    "ds-expr": (1, 320, 27),        # Material 3 expressive, spatial: quick, a hint of overshoot (damping ~0.75)
+    "ds-expr-soft": (1, 240, 28),   # Material 3 expressive, slower parts: no overshoot to speak of
+}
+# Material 3's easing curves (the public motion tokens): emphasized decelerate / accelerate, standard, and a long
+# soft landing for menus
+BEZIERS = {
+    "md-emph": ((0.05, 0.7), (0.1, 1.0)),
+    "md-accel": ((0.3, 0.0), (0.8, 0.15)),
+    "md-std": ((0.2, 0.0), (0.0, 1.0)),
+    "md-menu": ((0.1, 1.0), (0.0, 1.0)),
+}
+MOTION = {
+    "calm": None,
+    "lively": {
+        "windows": (6, "spring", "ds-lively", "popin 88%"), "windowsIn": (6, "spring", "ds-lively", "popin 82%"),
+        "windowsOut": (5, "bezier", "quick", "popin 92%"), "windowsMove": (6, "spring", "ds-soft", None),
+        "workspaces": (7, "spring", "ds-soft", "slidefade 18%"), "specialWorkspace": (5, "spring", "ds-soft", "slidefadevert 8%"),
+        "layersIn": (5, "spring", "ds-lively", "popin 92%"), "layersOut": (3, "bezier", "quick", "popin 95%"),
+        "fade": (4, "bezier", "smooth", None),
+    },
+    # Fluid: Material 3 emphasized motion. Windows grow out of themselves on a long, soft landing and leave quickly;
+    # workspaces glide with a fade; menus and panels slide in like M3 menus. No bounce
+    "fluid": {
+        "windows": (5, "bezier", "md-emph", "popin 84%"), "windowsIn": (5, "bezier", "md-emph", "popin 80%"),
+        "windowsOut": (2.5, "bezier", "md-accel", "popin 90%"), "windowsMove": (5, "bezier", "md-emph", None),
+        "workspaces": (6, "bezier", "md-emph", "slidefade 24%"), "specialWorkspace": (5, "bezier", "md-emph", "slidefadevert 14%"),
+        "layers": (4, "bezier", "md-emph", "fade"), "layersIn": (4, "bezier", "md-menu", "popin 92%"),
+        "layersOut": (2, "bezier", "md-accel", "popin 94%"), "fadeLayersIn": (3, "bezier", "md-std", None),
+        "fadeLayersOut": (2, "bezier", "md-accel", None), "fade": (4, "bezier", "md-std", None),
+    },
+    # Expressive: Material 3 expressive springs. Windows pop open with a hint of overshoot, things you move follow
+    # like they have weight, workspaces slide; closing stays short and calm
+    "expressive": {
+        "windows": (6, "spring", "ds-expr", "popin 76%"), "windowsIn": (6, "spring", "ds-expr", "popin 72%"),
+        "windowsOut": (2.5, "bezier", "md-accel", "popin 88%"), "windowsMove": (6, "spring", "ds-expr-soft", None),
+        "workspaces": (7, "spring", "ds-expr-soft", "slide"), "specialWorkspace": (5, "spring", "ds-expr-soft", "slidevert"),
+        "layers": (4, "bezier", "md-emph", "fade"), "layersIn": (5, "spring", "ds-expr", "popin 90%"),
+        "layersOut": (2, "bezier", "md-accel", "popin 94%"), "fadeLayersIn": (3, "bezier", "md-std", None),
+        "fadeLayersOut": (2, "bezier", "md-accel", None), "fade": (4, "bezier", "md-std", None),
+    },
+    "snappy": {
+        "windows": (2.5, "bezier", "quick", "popin 95%"), "windowsIn": (2.5, "bezier", "quick", "popin 92%"),
+        "windowsOut": (2, "bezier", "quick", "popin 95%"), "windowsMove": (2, "bezier", "quick", None),
+        "workspaces": (3, "bezier", "easeOutQuint", "slide"), "specialWorkspace": (2.5, "bezier", "quick", "slidevert"),
+        "layersIn": (2, "bezier", "quick", "fade"), "layersOut": (2, "bezier", "quick", "fade"),
+        "fade": (2.5, "bezier", "quick", None),
+    },
+    "minimal": {
+        # windows have no "fade" style in Hyprland: popin at 100% does not grow, so only the fade is left
+        "windows": (3, "bezier", "linearish", "popin 100%"), "windowsIn": (3, "bezier", "linearish", "popin 100%"),
+        "windowsOut": (3, "bezier", "linearish", "popin 100%"), "windowsMove": (3, "bezier", "quick", None),
+        "workspaces": (3, "bezier", "linearish", "fade"), "specialWorkspace": (3, "bezier", "linearish", "fade"),
+        "layersIn": (2, "bezier", "linearish", "fade"), "layersOut": (2, "bezier", "linearish", "fade"),
+        "fade": (3, "bezier", "linearish", None),
+    },
+}
+
+
+def spring_lines():
+    return (['hl.curve("%s", { type = "spring", mass = %d, stiffness = %d, dampening = %d })' % (n, m, k, d)
+             for n, (m, k, d) in SPRINGS.items()]
+            + ['hl.curve("%s", { type = "bezier", points = { { %s, %s }, { %s, %s } } })'
+               % (n, lua(float(a[0])), lua(float(a[1])), lua(float(b[0])), lua(float(b[1]))) for n, (a, b) in BEZIERS.items()])
+
+
+# Bouncy (V3.97 and older) is now Expressive
+OLD_STYLES = {"bouncy": "expressive"}
+
+
+def anim_lines(pct, style="calm"):
+    out = []
+    style = OLD_STYLES.get(style, style)
+    plan = MOTION.get(style)
+    if plan:
+        out += spring_lines()
+    for leaf, sp, bz, st0 in ANIMS:
+        kind, curve, st = "bezier", bz, st0
+        if plan and leaf in plan:
+            sp, kind, curve, st = plan[leaf]
+        spd = round(sp * 100.0 / pct, 2)
+        stx = (', style = "%s"' % st) if st else ""
+        out.append('hl.animation({ leaf = "%s", enabled = true, speed = %s, %s = "%s"%s })'
+                   % (leaf, lua(float(spd)), kind, curve, stx))
+    return out
+
+
+def load():
+    try:
+        s = json.load(open(ST))
+    except Exception:
+        s = {}
+    for k, d in (("opts", {}), ("borders", {}), ("anim", {}), ("monitors", {}), ("binds", []), ("autostart", []), ("kbd", {})):
+        s.setdefault(k, d)
+    return s
+
+
+def generate(s):
+    L = ["-- generated by rice-settings (hypr-set). Change it from the Settings window (SUPER + U)."]
+    for k, v in s["opts"].items():
+        if k in SPEC:
+            L.append("pcall(hl.config, %s)" % nest(k, v))
+    b = s["borders"]
+    if b.get("mode") == "custom":
+        L.append("pcall(hl.config, { general = { col = { active_border = %s, inactive_border = %s } } })"
+                 % (json.dumps(rgba(b.get("active"))), json.dumps(rgba(b.get("inactive") or "#444444"))))
+    a = s["anim"]
+    if "enabled" in a:
+        L.append("pcall(hl.config, { animations = { enabled = %s } })" % lua(bool(a["enabled"])))
+    if (a.get("speed") and int(a["speed"]) != 100) or a.get("style", "calm") != "calm":
+        for ln in anim_lines(int(a.get("speed") or 100), a.get("style", "calm")):
+            L.append("pcall(function() %s end)" % ln)
+    if "shadow_int" in s:
+        L.append("pcall(hl.config, %s)" % shadow_lua(s["shadow_int"]))
+    if s["kbd"].get("layouts"):
+        L.append("pcall(hl.config, %s)" % kbd_lua(s["kbd"]))
+    for name, m in s["monitors"].items():
+        if m.get("disabled"):
+            L.append("pcall(hl.monitor, { output = %s, disabled = true })" % json.dumps(name))
+            continue
+        extra = ", transform = %d" % int(m["transform"]) if int(m.get("transform", 0) or 0) else ""
+        L.append("pcall(hl.monitor, { output = %s, mode = %s, position = %s, scale = %s%s })"
+                 % (json.dumps(name), json.dumps(m["mode"]), json.dumps(m["position"]), lua(float(m["scale"])), extra))
+    for bd in s["binds"]:
+        L.append("pcall(function() hl.bind(%s, hl.dsp.exec_cmd(%s)) end)"
+                 % (json.dumps(bd["keys"]), json.dumps(bd["cmd"])))
+    for c in s["autostart"]:
+        L.append('hl.on("hyprland.start", function() hl.exec_cmd(%s) end)' % json.dumps(c))
+    return "\n".join(L) + "\n"
+
+
+def save(s):
+    os.makedirs(DIR, exist_ok=True)
+    json.dump(s, open(ST, "w"), indent=2)
+    os.makedirs(os.path.dirname(OUT), exist_ok=True)
+    open(OUT, "w").write(generate(s))
+    if NIRI:
+        niri_apply()
+
+
+def getopt(key, typ):
+    if NIRI:
+        v = load()["opts"].get(key, NIRI_DEFAULTS.get(key))
+        if v is None:
+            return None
+        return bool(v) if typ == "bool" else (int(v) if typ == "int" else (float(v) if typ == "float" else str(v)))
+    out = sh(["hyprctl", "-j", "getoption", key.replace(".", ":")])
+    try:
+        j = json.loads(out)
+    except Exception:
+        return None
+    v = None
+    for f in ("int", "float", "str"):
+        if f in j:
+            v = j[f]
+            break
+    if v is None:
+        c = j.get("custom") or j.get("data")
+        if c is None:
+            return None
+        m = re.search(r"-?\d+(?:\.\d+)?", str(c))
+        if not m:
+            return None
+        v = float(m.group(0))
+    if typ == "bool":
+        return bool(v)
+    if typ == "int":
+        return int(round(float(v)))
+    if typ == "float":
+        return round(float(v), 3)
+    return str(v)
+
+
+def cmd_state():
+    s = load()
+    opts = {}
+    for k, spec in SPEC.items():
+        v = getopt(k, spec[0])
+        if v is not None:
+            opts[k] = v
+    b = s["borders"]
+    print(json.dumps({
+        "opts": opts, "shadow_int": s.get("shadow_int", 60),
+        "borders": {"mode": b.get("mode", "wallpaper"), "active": b.get("active", "#F6F5F4"),
+                    "inactive": b.get("inactive", "#444444")},
+        "anim": {"enabled": s["anim"].get("enabled", True), "speed": int(s["anim"].get("speed", 100)),
+                 "style": OLD_STYLES.get(s["anim"].get("style", "calm"), s["anim"].get("style", "calm"))},
+    }))
+
+
+def cmd_set(key, raw):
+    spec = SPEC.get(key)
+    if not spec:
+        die("unknown key: " + key)
+    t = spec[0]
+    if t == "bool":
+        v = raw.lower() in ("1", "true", "on", "yes")
+    elif t == "int":
+        v = int(round(clamp(float(raw), spec[1], spec[2])))
+    elif t == "float":
+        v = round(clamp(float(raw), spec[1], spec[2]), 3)
+    else:
+        if raw not in spec[1]:
+            die("bad value: " + raw)
+        v = raw
+    s = load()
+    s["opts"][key] = v
+    save(s)
+    if not ev("hl.config(%s)" % nest(key, v)):
+        sys.exit(1)
+
+
+def apply_border_live(s):
+    b = s["borders"]
+    ev("hl.config({ general = { col = { active_border = %s, inactive_border = %s } } })"
+       % (json.dumps(rgba(b.get("active"))), json.dumps(rgba(b.get("inactive") or "#444444"))))
+
+
+def cmd_border_mode(mode):
+    if mode not in ("wallpaper", "custom"):
+        die("bad mode")
+    s = load()
+    b = s["borders"]
+    b["mode"] = mode
+    b.setdefault("active", "#F6F5F4")
+    b.setdefault("inactive", "#444444")
+    save(s)
+    os.makedirs(DIR, exist_ok=True)
+    if mode == "custom":
+        open(FLAG, "w").write("1")
+        apply_border_live(s)
+    else:
+        if os.path.exists(FLAG):
+            os.remove(FLAG)
+        subprocess.run([HOME + "/.local/bin/border-sync"])
+
+
+def cmd_border_color(which, hexv):
+    if which not in ("active", "inactive") or not re.match(r"^#[0-9a-fA-F]{6}$", hexv):
+        die("bad color")
+    s = load()
+    s["borders"][which] = hexv
+    s["borders"].setdefault("mode", "wallpaper")
+    save(s)
+    if s["borders"]["mode"] == "custom":
+        apply_border_live(s)
+
+
+def cmd_anim_enabled(v):
+    s = load()
+    s["anim"]["enabled"] = v == "on"
+    save(s)
+    ev("hl.config({ animations = { enabled = %s } })" % lua(v == "on"))
+
+
+def cmd_anim_speed(v):
+    pct = int(clamp(float(v), 50, 200))
+    s = load()
+    s["anim"]["speed"] = pct
+    save(s)
+    for ln in anim_lines(pct, s["anim"].get("style", "calm")):
+        ev(ln)
+
+
+def cmd_anim_style(v):
+    if v not in MOTION:
+        die("anim-style: " + "|".join(MOTION))
+    s = load()
+    s["anim"]["style"] = v
+    save(s)
+    for ln in anim_lines(int(s["anim"].get("speed", 100)), v):
+        ev(ln)
+
+
+def niri_binds():
+    """the keys in niri's config (rice-niri wrote them): "Mod+Q  ->  close-window" """
+    act = []
+    try:
+        txt = open(HOME + "/.config/niri/config.kdl").read()
+        body = txt[txt.index("\nbinds {"):]
+        for ln in body.split("\n")[1:]:
+            ln = ln.strip()
+            if ln == "}":
+                break
+            m = re.match(r'(\S+)(.*?)\{\s*(.*?);?\s*\}$', ln)
+            if m:
+                t = re.search(r'hotkey-overlay-title="([^"]*)"', m.group(2))
+                what = t.group(1) if t else re.sub(r'^spawn(-sh)? ', '', m.group(3))
+                what = " ".join(json.loads(x) if x.startswith('"') else x for x in re.findall(r'"(?:[^"\\]|\\.)*"|\S+', what))
+                act.append("%s  ->  %s" % (m.group(1), what.replace(HOME + "/.local/bin/", "")))
+    except Exception:
+        pass
+    return act
+
+
+def cmd_binds():
+    s = load()
+    if NIRI:
+        print(json.dumps({"custom": s["binds"], "active": niri_binds()[:160]}))
+        return
+    act = []
+    try:
+        data = json.loads(sh(["hyprctl", "-j", "binds"]))
+    except Exception:
+        data = []
+    for b in data:
+        mods = "+".join(n for bit, n in MODS if b.get("modmask", 0) & bit)
+        key = b.get("key") or ("code:%s" % b.get("keycode", ""))
+        keys = (mods + " + " if mods else "") + str(key)
+        d = (str(b.get("dispatcher", "")) + " " + str(b.get("arg", ""))).strip()
+        act.append("%s  ->  %s" % (keys, b.get("description") or d))
+    print(json.dumps({"custom": s["binds"], "active": act[:120]}))
+
+
+def cmd_keycheck(fix=""):
+    """a key bound with no modifier (a plain letter or digit) eats that key: you cannot type it anywhere.
+    Lists them; `keycheck fix` takes them off (written to ~/.cache/rice/keycheck.log)"""
+    if NIRI:
+        print("[]")
+        return
+    try:
+        data = json.loads(sh(["hyprctl", "-j", "binds"]))
+    except Exception:
+        data = []
+    bad = []
+    for b in data:
+        if b.get("modmask", 0) or b.get("mouse") or b.get("submap"):
+            continue
+        key = str(b.get("key") or "")
+        code = int(b.get("keycode", 0) or 0)
+        # letters, digits, space and the punctuation keys; or a key code in the letter rows (10-61)
+        if (len(key) == 1 and (key.isalnum() or key in "`-=[];',./\\")) or key.lower() == "space" or (not key and 10 <= code <= 61):
+            bad.append({"key": key or "code:%d" % code, "does": (str(b.get("description") or "") or
+                        (str(b.get("dispatcher", "")) + " " + str(b.get("arg", ""))).strip())})
+    if fix and bad:
+        os.makedirs(HOME + "/.cache/rice", exist_ok=True)
+        with open(HOME + "/.cache/rice/keycheck.log", "a") as f:
+            for x in bad:
+                ok = ev("hl.unbind(%s)" % json.dumps(x["key"]))
+                f.write("%s  took off a bind on the plain key %s (%s)%s\n" % (time.strftime("%Y-%m-%d %H:%M"), x["key"], x["does"], "" if ok else " FAILED"))
+        if shutil.which("notify-send"):
+            subprocess.Popen(["notify-send", "-a", "DarkShadow's Shell", "A key could not be typed",
+                              "Something bound the plain key %s, so it never reached your apps. It is free again "
+                              "(details: ~/.cache/rice/keycheck.log)." % ", ".join(x["key"] for x in bad)])
+    print(json.dumps(bad))
+
+
+def cmd_bind_add(keys, cmd):
+    if not re.match(r"^[A-Za-z0-9_+ .:-]+$", keys) or not cmd.strip():
+        die("bad keys or command")
+    s = load()
+    s["binds"].append({"keys": keys, "cmd": cmd})
+    save(s)
+    ev("hl.bind(%s, hl.dsp.exec_cmd(%s))" % (json.dumps(keys), json.dumps(cmd)))
+
+
+def cmd_bind_del(idx):
+    s = load()
+    i = int(idx)
+    if 0 <= i < len(s["binds"]):
+        s["binds"].pop(i)
+        save(s)
+
+
+def cmd_autostart():
+    s = load()
+    items = []
+    if NIRI:      # hyprland.lua's own programs start only in Hyprland; niri starts the shell (rice-niri)
+        print(json.dumps({"main": [], "custom": s["autostart"]}))
+        return
+    try:
+        lines = open(MAIN).read().split("\n")
+    except Exception:
+        lines = []
+    for i, ln in enumerate(lines, 1):
+        m = EXEC.match(ln)
+        if m:
+            inner = m.group(3)[len("hl.exec_cmd("):-1].strip()
+            if len(inner) >= 2 and inner[0] == inner[-1] and inner[0] in "\"'":
+                inner = inner[1:-1]
+            items.append({"line": i, "enabled": m.group(2) is None, "cmd": inner})
+    print(json.dumps({"main": items, "custom": s["autostart"]}))
+
+
+def cmd_autostart_add(c):
+    if not c.strip():
+        die("empty command")
+    s = load()
+    s["autostart"].append(c.strip())
+    save(s)
+
+
+def cmd_autostart_del(idx):
+    s = load()
+    i = int(idx)
+    if 0 <= i < len(s["autostart"]):
+        s["autostart"].pop(i)
+        save(s)
+
+
+def cmd_autostart_toggle(line):
+    n = int(line)
+    lines = open(MAIN).read().split("\n")
+    if n < 1 or n > len(lines):
+        die("bad line")
+    m = EXEC.match(lines[n - 1])
+    if not m:
+        die("line is not an exec_cmd")
+    bak = MAIN + ".bak-rice"
+    if not os.path.exists(bak):
+        shutil.copy(MAIN, bak)
+    lines[n - 1] = m.group(1) + (m.group(3) if m.group(2) else "-- " + m.group(3))
+    open(MAIN, "w").write("\n".join(lines))
+
+
+def monitors_json():
+    """Hyprland's monitors, or niri's outputs in the same shape (width/height in pixels, availableModes)"""
+    if NIRI:
+        try:
+            outs = json.loads(sh(["niri", "msg", "-j", "outputs"]))
+        except Exception:
+            return []
+        res = []
+        for name, o in outs.items():
+            lg = o.get("logical")
+            if not lg:
+                res.append({"name": name, "width": 0, "height": 0, "refreshRate": 60, "scale": 1, "x": 0, "y": 0,
+                            "availableModes": [], "disabled": True, "transform": 0,
+                            "description": " ".join(x for x in (o.get("make"), o.get("model")) if x)})
+                continue
+            modes = o.get("modes") or []
+            cur = modes[o["current_mode"]] if o.get("current_mode") is not None and o["current_mode"] < len(modes) else {}
+            res.append({"name": name, "width": cur.get("width", lg["width"]), "height": cur.get("height", lg["height"]),
+                        "refreshRate": (cur.get("refresh_rate") or 60000) / 1000.0, "scale": lg.get("scale", 1),
+                        "x": lg["x"], "y": lg["y"], "disabled": False,
+                        "transform": {"Normal": 0, "90": 1, "180": 2, "270": 3}.get(str(lg.get("transform", "Normal")), 0),
+                        "description": " ".join(x for x in (o.get("make"), o.get("model")) if x),
+                        "availableModes": ["%dx%d@%.3fHz" % (m["width"], m["height"], m["refresh_rate"] / 1000.0) for m in modes]})
+        return res
+    try:
+        return json.loads(sh(["hyprctl", "-j", "monitors", "all"]))
+    except Exception:
+        try:
+            return json.loads(sh(["hyprctl", "-j", "monitors"]))
+        except Exception:
+            return []
+
+
+def cmd_monitors():
+    out = []
+    for m in monitors_json():
+        modes = {}
+        for t in m.get("availableModes", []):
+            mm = re.match(r"(\d+)x(\d+)@([\d.]+)", t)
+            if mm:
+                res = mm.group(1) + "x" + mm.group(2)
+                r = mon_rate(mm.group(3))
+                modes.setdefault(res, [])
+                if r not in modes[res]:
+                    modes[res].append(r)
+        lst = [{"res": r, "rates": sorted(v, key=lambda x: -float(x))} for r, v in modes.items()]
+        lst.sort(key=lambda e: -int(e["res"].split("x")[0]) * int(e["res"].split("x")[1]))
+        out.append({"name": m["name"], "width": m["width"], "height": m["height"],
+                    "rate": mon_rate(m.get("refreshRate", 60)), "scale": m.get("scale", 1),
+                    "x": m.get("x", 0), "y": m.get("y", 0), "modes": lst,
+                    "transform": int(m.get("transform", 0) or 0), "disabled": bool(m.get("disabled", False)),
+                    "description": m.get("description") or " ".join(x for x in (m.get("make"), m.get("model")) if x)})
+    print(json.dumps(out))
+
+
+def cur_monitor(name):
+    for m in monitors_json():
+        if m["name"] == name:
+            return m
+    return None
+
+
+def mode_str(m):
+    return "%dx%d@%s" % (m["width"], m["height"], mon_rate(m.get("refreshRate", 60)))
+
+
+def mon_eval(name, mode, pos, scale):
+    if NIRI:      # right away, until niri reads its config again (Keep writes it there)
+        a = sh(["niri", "msg", "output", name, "mode", mode])
+        b = sh(["niri", "msg", "output", name, "scale", str(scale)])
+        return "error" not in (a + b).lower()
+    return ev("hl.monitor({ output = %s, mode = %s, position = %s, scale = %s })"
+              % (json.dumps(name), json.dumps(mode), json.dumps(pos), lua(float(scale))))
+
+
+def cmd_monitor_apply(name, res, rate, scale):
+    m = cur_monitor(name)
+    if not m:
+        die("no such monitor")
+    pos = "%dx%d" % (m["x"], m["y"])
+    os.makedirs(DIR, exist_ok=True)
+    if not os.path.exists(PREV):
+        json.dump({"name": name, "mode": mode_str(m), "position": pos, "scale": m.get("scale", 1)}, open(PREV, "w"))
+    if not mon_eval(name, "%s@%s" % (res, rate), pos, scale):
+        sys.exit(1)
+
+
+def mon_state(m):
+    return {"name": m["name"], "mode": mode_str(m), "position": "%dx%d" % (m.get("x", 0), m.get("y", 0)),
+            "scale": m.get("scale", 1), "transform": int(m.get("transform", 0) or 0), "disabled": bool(m.get("disabled"))}
+
+
+def remember_all():
+    """before a change of several screens: how all of them are now (Revert brings this back)"""
+    os.makedirs(DIR, exist_ok=True)
+    if not os.path.exists(PREV):
+        json.dump({"all": [mon_state(m) for m in monitors_json()]}, open(PREV, "w"))
+
+
+def mon_set_full(st):
+    """one screen exactly like st (mode, position, scale, rotation, on/off), right away"""
+    name = st["name"]
+    if NIRI:
+        if st.get("disabled"):
+            return "error" not in sh(["niri", "msg", "output", name, "off"]).lower()
+        out = sh(["niri", "msg", "output", name, "on"])
+        mm = re.match(r"(-?\d+)x(-?\d+)$", st.get("position", ""))
+        if mm:
+            out += sh(["niri", "msg", "output", name, "position", "set", mm.group(1), mm.group(2)])
+        out += sh(["niri", "msg", "output", name, "transform", ["normal", "90", "180", "270"][int(st.get("transform", 0)) % 4]])
+        if st.get("mode") and not st["mode"].startswith("0x0"):
+            out += sh(["niri", "msg", "output", name, "mode", st["mode"]])
+        out += sh(["niri", "msg", "output", name, "scale", str(st.get("scale", 1))])
+        return "error" not in out.lower()
+    if st.get("disabled"):
+        return ev("hl.monitor({ output = %s, disabled = true })" % json.dumps(name))
+    mode = st.get("mode") or "preferred"
+    if mode.startswith("0x0"):
+        mode = "preferred"
+    return ev("hl.monitor({ output = %s, mode = %s, position = %s, scale = %s, transform = %d })"
+              % (json.dumps(name), json.dumps(mode), json.dumps(st.get("position") or "auto"),
+                 lua(float(st.get("scale", 1))), int(st.get("transform", 0) or 0)))
+
+
+def cmd_monitor_layout(js):
+    """Settings > Screen > Arrange: [{"name": "DP-1", "x": 0, "y": 0}, ...] - every screen to its place at once"""
+    try:
+        want = json.loads(js)
+    except Exception:
+        die("not JSON")
+    remember_all()
+    now = {m["name"]: m for m in monitors_json()}
+    ok = True
+    for w in want:
+        m = now.get(w.get("name"))
+        if not m or m.get("disabled"):
+            continue
+        st = mon_state(m)
+        st["position"] = "%dx%d" % (int(w["x"]), int(w["y"]))
+        ok = mon_set_full(st) and ok
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_monitor_set(name, key, value):
+    """Settings > Screen: one thing of one screen: rotate 0-3, enabled on|off"""
+    m = cur_monitor(name)
+    if not m:
+        die("no such monitor")
+    remember_all()
+    st = mon_state(m)
+    if key == "rotate":
+        st["transform"] = int(value) % 4
+    elif key == "enabled":
+        if value == "off" and sum(1 for x in monitors_json() if not x.get("disabled")) <= 1:
+            die("this is your only screen that is on")
+        st["disabled"] = value == "off"
+    else:
+        die("rotate|enabled")
+    if not mon_set_full(st):
+        sys.exit(1)
+
+
+def cmd_monitor_keep():
+    if not os.path.exists(PREV):
+        return
+    prev = json.load(open(PREV))
+    s = load()
+    names = [p["name"] for p in prev["all"]] if "all" in prev else [prev["name"]]
+    for m in monitors_json():
+        if m["name"] in names:
+            st = mon_state(m)
+            s["monitors"][m["name"]] = {k: st[k] for k in ("mode", "position", "scale", "transform", "disabled")}
+    save(s)
+    os.remove(PREV)
+
+
+def cmd_monitor_save_all():
+    """every screen as it is now (mode, place, scale, turn), kept for the next boots: two screens are not placed in a
+    new order after a reboot (rice-screens keep runs it once at login, when nothing was saved yet)"""
+    s = load()
+    for m in monitors_json():
+        st = mon_state(m)
+        s["monitors"][m["name"]] = {k: st[k] for k in ("mode", "position", "scale", "transform", "disabled")}
+    save(s)
+
+
+def cmd_monitor_revert():
+    if not os.path.exists(PREV):
+        return
+    p = json.load(open(PREV))
+    if "all" in p:
+        for st in p["all"]:
+            mon_set_full(st)
+    else:
+        mon_eval(p["name"], p["mode"], p["position"], p["scale"])
+    os.remove(PREV)
+
+
+def cmd_reload():
+    if NIRI:
+        niri_apply()
+        return
+    subprocess.run(["hyprctl", "reload"])
+    subprocess.run([HOME + "/.local/bin/border-sync"])
+
+
+# ---------- shadow strength (Settings > Desktop > Windows) ----------
+def shadow_lua(pct):
+    a = max(0, min(255, int(round(int(pct) * 2.55))))
+    return "{ decoration = { shadow = { color = %s } } }" % json.dumps("rgba(000000%02x)" % a)
+
+
+def cmd_shadow_intensity(pct):
+    v = int(clamp(float(pct), 0, 100))
+    s = load()
+    s["shadow_int"] = v
+    save(s)
+    ev("hl.config(%s)" % shadow_lua(v))
+    print("Shadow strength: %d %%" % v)
+
+
+# ---------- keyboard layouts (Settings > System > Keyboard) ----------
+XKB_LISTS = ["/usr/share/X11/xkb/rules/evdev.lst", "/run/current-system/sw/share/X11/xkb/rules/evdev.lst",
+             "/etc/static/X11/xkb/rules/evdev.lst"]
+COMMON = [("us", "English (US)"), ("gb", "English (UK)"), ("pl", "Polish"), ("de", "German"), ("fr", "French"),
+          ("es", "Spanish"), ("it", "Italian"), ("pt", "Portuguese"), ("br", "Portuguese (Brazil)"), ("ru", "Russian"),
+          ("ua", "Ukrainian"), ("cz", "Czech"), ("sk", "Slovak"), ("hu", "Hungarian"), ("ro", "Romanian"),
+          ("nl", "Dutch"), ("se", "Swedish"), ("no", "Norwegian"), ("dk", "Danish"), ("fi", "Finnish"),
+          ("tr", "Turkish"), ("gr", "Greek"), ("jp", "Japanese"), ("kr", "Korean"), ("cn", "Chinese"), ("ara", "Arabic"),
+          ("il", "Hebrew"), ("in", "Indian"), ("ch", "Swiss"), ("be", "Belgian"), ("latam", "Spanish (Latin American)")]
+
+
+def kbd_lua(k):
+    return "{ input = { kb_layout = %s, kb_variant = %s, kb_options = %s } }" % (
+        json.dumps(k.get("layouts", "us")), json.dumps(k.get("variants", "")), json.dumps(k.get("options", "")))
+
+
+def xkb_layouts():
+    paths = list(XKB_LISTS)
+    try:
+        for d in os.listdir("/nix/store"):
+            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
+                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
+    except Exception:
+        pass
+    for p in paths:
+        try:
+            txt = open(p).read()
+        except Exception:
+            continue
+        m = re.search(r"! layout\n(.*?)\n\n", txt, re.S)
+        if m:
+            out = []
+            for ln in m.group(1).splitlines():
+                parts = ln.strip().split(None, 1)
+                if len(parts) == 2:
+                    out.append((parts[0], parts[1]))
+            if out:
+                return out
+    return COMMON
+
+
+def kbd_current():
+    """the layouts in use now and the active one, from Hyprland's main keyboard"""
+    s = load()
+    lay = s["kbd"].get("layouts") or ""
+    if NIRI:
+        try:
+            k = json.loads(sh([BIN + "/rice-wm", "kbd"]))
+        except Exception:
+            k = {}
+        return lay or "us", k.get("active", "")
+    if not lay:
+        out = sh(["hyprctl", "-j", "getoption", "input:kb_layout"])
+        try:
+            lay = json.loads(out).get("str", "") or "us"
+        except Exception:
+            lay = "us"
+    active = ""
+    try:
+        for kb in json.loads(sh(["hyprctl", "-j", "devices"])).get("keyboards", []):
+            if kb.get("main"):
+                active = kb.get("active_keymap", "")
+                break
+    except Exception:
+        pass
+    return lay, active
+
+
+def xkb_paths():
+    paths = list(XKB_LISTS)
+    try:
+        for d in os.listdir("/nix/store"):
+            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
+                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
+    except Exception:
+        pass
+    return paths
+
+
+def xkb_variants(layout):
+    """[(variant, description)] for one layout, from the variant list of xkeyboard-config"""
+    paths = list(XKB_LISTS)
+    try:
+        for d in os.listdir("/nix/store"):
+            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
+                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
+    except Exception:
+        pass
+    for p in paths:
+        try:
+            txt = open(p).read()
+        except Exception:
+            continue
+        m = re.search(r"! variant\n(.*?)\n\n", txt, re.S)
+        if not m:
+            continue
+        out = []
+        for ln in m.group(1).splitlines():
+            mm = re.match(r"\s*(\S+)\s+(\S+):\s*(.*)", ln)
+            if mm and mm.group(2) == layout:
+                out.append((mm.group(1), mm.group(3)))
+        return out
+    return []
+
+
+def xkb_variant_counts():
+    n = {}
+    for lay in xkb_variants_all():
+        n[lay] = n.get(lay, 0) + 1
+    return n
+
+
+def xkb_variants_all():
+    """the layout of every variant line (for counting)"""
+    for p in xkb_paths():
+        try:
+            txt = open(p).read()
+        except Exception:
+            continue
+        m = re.search(r"! variant\n(.*?)\n\n", txt, re.S)
+        if m:
+            return [mm.group(1) for mm in re.finditer(r"^\s*\S+\s+(\S+):", m.group(1), re.M)]
+    return []
+
+
+def cmd_kbd_variants(layout):
+    print(json.dumps([{"id": a, "name": b} for a, b in xkb_variants(layout)]))
+
+
+def cmd_kbd_state():
+    s = load()
+    lay, active = kbd_current()
+    cnt = xkb_variant_counts()
+    print(json.dumps({"layouts": [x for x in lay.split(",") if x], "active": active,
+                      "variants": (s["kbd"].get("variants") or "").split(","),
+                      "options": s["kbd"].get("options", ""),
+                      "all": [{"id": a, "name": b, "n": cnt.get(a, 0)} for a, b in xkb_layouts()]}))
+
+
+def cmd_kbd_set(layouts):
+    """LAYOUTS: us,pl or us:intl,pl (layout:variant)"""
+    lays, vars_ = [], []
+    for x in layouts.split(","):
+        lay, _, var = x.strip().partition(":")
+        if re.fullmatch(r"[a-z]{2,6}", lay) and re.fullmatch(r"[A-Za-z0-9_-]*", var):
+            lays.append(lay)
+            vars_.append(var)
+    lays, vars_ = lays[:4], vars_[:4]
+    if not lays:
+        die("no layout")
+    s = load()
+    s["kbd"]["layouts"] = ",".join(lays)
+    s["kbd"]["variants"] = ",".join(vars_) if any(vars_) else ""
+    if len(lays) > 1 and not s["kbd"].get("options"):
+        s["kbd"]["options"] = "grp:alt_shift_toggle"
+    save(s)
+    ev("hl.config(%s)" % kbd_lua(s["kbd"]))
+    print("Keyboard: " + ", ".join(lays))
+
+
+def cmd_kbd_remember():
+    """Before an update: the keyboard layout Hyprland uses now (set by hand in hyprland.lua, or by another tool) is
+    kept in hypr.json when the Settings app has none, so the update does not put the keyboard back to US."""
+    if NIRI or not shutil.which("hyprctl"):
+        return
+    s = load()
+    if s["kbd"].get("layouts"):
+        return
+    def opt(k):
+        try:
+            return (json.loads(sh(["hyprctl", "-j", "getoption", "input:" + k])) or {}).get("str", "") or ""
+        except Exception:
+            return ""
+    lay = opt("kb_layout").strip()
+    if not lay or lay == "us":
+        return
+    s["kbd"]["layouts"] = lay
+    s["kbd"]["variants"] = opt("kb_variant").strip()
+    s["kbd"]["options"] = opt("kb_options").strip()
+    save(s)
+    print("Keyboard layout kept: " + lay)
+
+
+def cmd_regen():
+    """Writes rice-settings.lua again from hypr.json (after an update put the shipped one in its place)"""
+    if os.path.exists(ST):
+        s = load()
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
+        open(OUT, "w").write(generate(s))
+
+
+def cmd_kbd_options(opts):
+    if opts and not re.fullmatch(r"[a-z0-9_:,]+", opts):
+        die("bad options")
+    s = load()
+    s["kbd"]["options"] = opts
+    s["kbd"].setdefault("layouts", kbd_current()[0])
+    save(s)
+    ev("hl.config(%s)" % kbd_lua(s["kbd"]))
+    print("Keyboard switch: " + (opts or "none"))
+
+
+def cmd_kbd_next():
+    sh([BIN + "/rice-wm", "kbd-next"])
+
+
+def cmd_reset_all():
+    for f in (ST, PREV, FLAG):
+        if os.path.exists(f):
+            os.remove(f)
+    open(OUT, "w").write("-- generated by rice-settings (hypr-set)\n")
+    cmd_reload()
+
+
+def main(a):
+    if len(a) < 2:
+        die("usage: hypr-set state|set|border-mode|border-color|anim-enabled|anim-speed|anim-style|binds|bind-add|bind-del|"
+            "autostart|autostart-add|autostart-del|autostart-toggle|monitors|monitor-apply|monitor-keep|"
+            "monitor-revert|monitor-layout|monitor-set|reload|reset-all|kbd-state|kbd-set|kbd-options|kbd-next")
+    c, r = a[1], a[2:]
+    table = {
+        "state": (0, cmd_state), "set": (2, cmd_set), "border-mode": (1, cmd_border_mode),
+        "border-color": (2, cmd_border_color), "anim-enabled": (1, cmd_anim_enabled),
+        "anim-speed": (1, cmd_anim_speed), "monitor-save-all": (0, cmd_monitor_save_all), "anim-style": (1, cmd_anim_style), "binds": (0, cmd_binds), "bind-add": (2, cmd_bind_add),
+        "kbd-remember": (0, cmd_kbd_remember), "regen": (0, cmd_regen),
+        "bind-del": (1, cmd_bind_del), "keycheck": (0, cmd_keycheck), "keycheck-fix": (0, lambda: cmd_keycheck("fix")), "autostart": (0, cmd_autostart), "autostart-add": (1, cmd_autostart_add),
+        "autostart-del": (1, cmd_autostart_del), "autostart-toggle": (1, cmd_autostart_toggle),
+        "monitors": (0, cmd_monitors), "monitor-apply": (4, cmd_monitor_apply),
+        "monitor-keep": (0, cmd_monitor_keep), "monitor-revert": (0, cmd_monitor_revert),
+        "monitor-layout": (1, cmd_monitor_layout), "monitor-set": (3, cmd_monitor_set),
+        "reload": (0, cmd_reload), "reset-all": (0, cmd_reset_all),
+        "kbd-state": (0, cmd_kbd_state), "kbd-set": (1, cmd_kbd_set), "kbd-options": (1, cmd_kbd_options),
+        "kbd-next": (0, cmd_kbd_next), "shadow-intensity": (1, cmd_shadow_intensity),
+        "kbd-variants": (1, cmd_kbd_variants),
+    }
+    if c not in table or len(r) != table[c][0]:
+        die("bad command or arguments: " + c)
+    table[c][1](*r)
+
+
+main(sys.argv)

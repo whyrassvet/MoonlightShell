@@ -1,0 +1,187 @@
+@import "colors.css";
+
+* {
+    font-family: "Jetbrains Mono", monospace;
+    font-weight: 800;
+    font-size: 13px;
+    color: #F6F5F4;
+}
+
+window#waybar {
+    background: transparent;
+    border: none;
+    margin: 6px 8px;
+    padding: 0;
+}
+
+#workspaces,
+#image.nix,
+#ws,
+#mpris,
+#wireplumber,
+#clock,
+#apps,
+#custom-notification,
+#custom-lock {
+    background: rgba(13, 13, 13, 0.95);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    margin: 0 4px;
+    padding: 4px 12px;
+}
+
+#workspaces {
+    padding: 4px 6px;
+}
+
+#apps {
+    padding: 4px 4px;
+}
+
+#network,
+#tray,
+#network,
+#tray,
+#bluetooth {
+    padding: 0 6px;
+}
+
+#bluetooth {
+    font-size: 17px;
+}
+
+#workspaces button {
+    padding: 0px 3px;
+    margin: 0 1px;
+    border-radius: 50%;
+    background: transparent;
+    color: #F6F5F4;
+}
+
+#workspaces button.active {
+    color: @on_accent;
+    background: @accent;
+}
+
+#workspaces button:hover {
+    background: #1a1a1a;
+    color: @accent;
+}
+
+#workspaces button.urgent {
+    background: #8C4A3A;
+    color: #F0D6A3;
+    border-radius: 4px;
+}
+
+#wireplumber.muted {
+    opacity: 0.55;
+}
+
+#custom-lock:hover {
+    color: #ff4d4d;
+}
+
+tooltip {
+    background: rgba(13, 13, 13, 0.95);
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+}
+
+tooltip label {
+    color: #F6F5F4;
+    font-size: 11px;
+}
+
+#custom-notification {
+    font-size: 15px;
+    padding: 4px 12px;
+}
+
+#network {
+    font-size: 16px;
+    margin-left: 2px;
+}
+
+#ws {
+    padding: 4px 6px;
+}
+
+#custom-ws1,
+#custom-ws2,
+#custom-ws3,
+#custom-ws4 {
+    padding: 0 8px;
+    margin: 0 1px;
+    border-radius: 50%;
+    color: #F6F5F4;
+    background: transparent;
+}
+
+#custom-ws1.active,
+#custom-ws2.active,
+#custom-ws3.active,
+#custom-ws4.active {
+    color: @on_accent;
+    background: @accent;
+}
+
+#custom-ws1:hover,
+#custom-ws2:hover,
+#custom-ws3:hover,
+#custom-ws4:hover {
+    background: #1a1a1a;
+    color: @accent;
+}
+
+#image.nix {
+    font-size: 17px;
+    padding: 2px 7px;
+    margin-right: 8px;
+}
+
+#image.nix:hover {
+    color: @accent;
+}
+
+/* rice-ui */
+
+window#waybar {
+    background: rgba(13, 13, 13, 0.25);
+}
+
+#image.nix, #custom-distro, #ws, #mpris, #wireplumber, #clock, #apps, #custom-notification, #custom-lock {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    margin: 0 3px;
+}
+
+#image.nix, #custom-distro, #ws, #mpris, #wireplumber, #clock, #apps, #custom-notification, #custom-lock, #bluetooth, #tray, #network {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    margin-top: 0;
+    margin-bottom: 0;
+    min-height: 0;
+}
+
+tooltip {
+    background: rgba(18, 18, 18, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+}
+
+tooltip label {
+    color: #F6F5F4;
+    padding: 2px 6px;
+}
+
+window#waybar #custom-lock {
+    font-size: 18px;
+}
+
+window#waybar #custom-lock {
+    margin-right: 14px;
+}
+
+/* end-rice-ui */

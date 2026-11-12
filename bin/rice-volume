@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# rice-volume up|down|mute|mic   the volume keys (the shell shows how loud it is)
+# rice-volume menu [X [Y]]       open the sound menu under the bar (X: where the icon is, from the left; Y: from the top, for a bar on the side)
+step=5
+case "${1:-}" in
+  up|down|mute|mic)
+    if command -v wpctl >/dev/null 2>&1; then
+      case "$1" in
+        up) wpctl set-mute @DEFAULT_AUDIO_SINK@ 0; wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ "${step}%+" ;;
+        down) wpctl set-volume @DEFAULT_AUDIO_SINK@ "${step}%-" ;;
+        mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
+        mic) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle ;;
+      esac
+    elif command -v pamixer >/dev/null 2>&1; then
+      case "$1" in
+        up) pamixer -u; pamixer -i "$step" ;;
+        down) pamixer -d "$step" ;;
+        mute) pamixer -t ;;
+        mic) pamixer --default-source -t ;;
+      esac
+    fi ;;
+  menu)
+    if pgrep -f "quickshell/rice-desktop" >/dev/null 2>&1; then
+      mkdir -p "$HOME/.cache/rice"
+      printf '%s %s\n' "$(date +%s.%N)" "${2:-0} ${3:-}" >"$HOME/.cache/rice/volume-open"
+    else
+      exec pavucontrol
+    fi ;;
+  *) echo "usage: rice-volume up|down|mute|mic|menu [X]" >&2; exit 1 ;;
+esac

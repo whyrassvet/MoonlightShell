@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""rice-shadows state | set KEY VALUE
+Shell shadows (Settings > Desktop > Windows): soft shadows the shell draws itself under its own parts, on top of
+Hyprland's window shadows. ~/.config/rice/shadows.json
+  enabled on|off         all of them
+  bar on|off             under the bar (and its notch)
+  panels on|off          menus, the control center, the game bar, the dashboard
+  widgets on|off         desktop widgets
+  notifications on|off   notification popups
+  size 4..40             how far the shadow reaches (px)
+  strength 0..100        how dark it is (%)"""
+import json
+import os
+import sys
+
+CFG = os.path.expanduser("~/.config/rice/shadows.json")
+DEFAULTS = {"enabled": True, "bar": True, "panels": True, "widgets": True, "notifications": True, "size": 18, "strength": 45}
+BOOLS = ("enabled", "bar", "panels", "widgets", "notifications")
+RANGES = {"size": (4, 40), "strength": (0, 100)}
+
+
+def load():
+    c = dict(DEFAULTS)
+    try:
+        j = json.load(open(CFG))
+        for k in DEFAULTS:
+            if k in j:
+                c[k] = (j[k] is True) if k in BOOLS else int(max(RANGES[k][0], min(RANGES[k][1], float(j[k]))))
+    except Exception:
+        pass
+    return c
+
+
+def main(a):
+    if len(a) >= 2 and a[1] == "state":
+        print(json.dumps(load()))
+    elif len(a) == 4 and a[1] == "set" and a[2] in DEFAULTS:
+        k, v = a[2], a[3]
+        c = load()
+        if k in BOOLS:
+            c[k] = v.lower() in ("1", "true", "on", "yes")
+        else:
+            c[k] = int(max(RANGES[k][0], min(RANGES[k][1], float(v))))
+        os.makedirs(os.path.dirname(CFG), exist_ok=True)
+        tmp = CFG + ".tmp"
+        json.dump(c, open(tmp, "w"))
+        os.replace(tmp, CFG)
+        print("Shell shadows: %s = %s" % (k, c[k]))
+    else:
+        sys.exit(__doc__)
+
+
+main(sys.argv)

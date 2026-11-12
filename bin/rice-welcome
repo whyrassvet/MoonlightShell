@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Welcome intro (full screen, once after DarkShadow's Shell is installed), then Settings opens with a short tour.
+#   rice-welcome start    play it if it has not been seen yet (Hyprland runs this at login, the installer at the end)
+#   rice-welcome show     play it again now
+#   rice-welcome seen     mark it as seen (the intro does this itself)
+#   rice-welcome tour     only the Settings tour
+#   rice-welcome on|off   off: never play it on its own
+#   rice-welcome status
+dir="$HOME/.config/quickshell/rice-welcome"
+off="$HOME/.config/rice/welcome-off"
+seen="$HOME/.config/rice/welcome-seen"
+running() { pgrep -f "quickshell/rice-welcome" >/dev/null; }
+launch() {
+  [ -f "$dir/shell.qml" ] || { echo "missing $dir/shell.qml" >&2; exit 1; }
+  running && exit 0
+  command -v qs >/dev/null 2>&1 || { echo "qs not found" >&2; exit 1; }
+  setsid -f qs -n -p "$dir" >/dev/null 2>&1
+}
+case "$1" in
+  start)
+    [ -f "$off" ] && exit 0
+    [ -f "$seen" ] && exit 0
+    sleep "${2:-2}"
+    launch
+    ;;
+  show) launch ;;
+  seen) mkdir -p "$(dirname "$seen")"; date +%s >"$seen" ;;
+  tour)
+    mkdir -p "$HOME/.cache/rice"; : >"$HOME/.cache/rice/settings-tour"
+    pkill -f "quickshell/rice-settings" 2>/dev/null && sleep 0.4
+    exec qs -n -p "$HOME/.config/quickshell/rice-settings"
+    ;;
+  on)  rm -f "$off"; echo "welcome: on" ;;
+  off) mkdir -p "$(dirname "$off")"; : >"$off"; echo "welcome: off" ;;
+  status) if [ -f "$off" ]; then echo off; elif [ -f "$seen" ]; then echo "on (already seen)"; else echo on; fi ;;
+  *) echo "usage: rice-welcome start|show|seen|tour|on|off|status" >&2; exit 1 ;;
+esac

@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""rice-ws-watch: listens to Hyprland's events (or niri's event stream).
+
+- workspace switched: sends SIGRTMIN+8 to Waybar (the "signal": 8 of the custom/ws modules), so the
+  buttons change at once. Works for both process names: waybar (Arch) and .waybar-wrapped (NixOS).
+- workspace switched while the widget editor is open: closes the editor.
+- config reloaded (gaming mode, updates, settings, hyprctl reload): puts your wallpaper border
+  colors back (border-sync), so borders never fall back to the default color.
+Started by rice-desktop; only one copy runs.
+"""
+import fcntl
+import os
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+
+SIG = signal.SIGRTMIN + 8
+EVENTS = (b"workspace>>", b"workspacev2>>", b"focusedmon>>", b"activespecial>>",
+          b"createworkspace>>", b"destroyworkspace>>", b"moveworkspace>>")
+NAMES = {"waybar", ".waybar-wrapped", "waybar-wrapped"}
+
+
+def waybar_pids():
+    out = []
+    for p in os.listdir("/proc"):
+        if p.isdigit():
+            try:
+                comm = open("/proc/%s/comm" % p).read().strip()
+                argv = open("/proc/%s/cmdline" % p, "rb").read().split(b"\0")[:2]
+                names = {comm} | {os.path.basename(a.decode(errors="ignore")) for a in argv if a}
+                if names & NAMES:
+                    out.append(int(p))
+            except OSError:
+                pass
+    return out
+
+
+def poke():
+    for pid in waybar_pids():
+        try:
+            os.kill(pid, SIG)
+        except OSError:
+            pass
+
+
+BORDER_SYNC = os.path.expanduser("~/.local/bin/border-sync")
+CUSTOM_FLAG = os.path.expanduser("~/.config/rice/border-custom")
+_timer = [None]
+
+
+def borders():
+    # custom colors live in rice-settings.lua and survive a reload; wallpaper colors are set live
+    if os.path.exists(CUSTOM_FLAG) or not os.access(BORDER_SYNC, os.X_OK):
+        return
+    try:
+        subprocess.Popen([BORDER_SYNC], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        pass
+
+
+DESKTOP = os.path.expanduser("~/.config/rice/desktop.json")
+DESKTOP_SET = os.path.expanduser("~/.local/bin/desktop-set")
+
+
+def close_editor():
+    """the widget editor belongs to the desktop you started it on"""
+    try:
+        import json
+        if json.load(open(DESKTOP)).get("editing") is True:
+            subprocess.Popen([DESKTOP_SET, "edit", "off"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+    except Exception:
+        pass
+
+
+def after_reload():
+    # several reloads in a row (installer, gaming mode): run once, shortly after the last one
+    if _timer[0]:
+        _timer[0].cancel()
+    _timer[0] = threading.Timer(0.6, borders)
+    _timer[0].daemon = True
+    _timer[0].start()
+
+
+def sock_path():
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    run = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    if not sig:  # started outside Hyprland's environment: take the newest instance
+        try:
+            d = run + "/hypr"
+            sig = max(os.listdir(d), key=lambda n: os.path.getmtime(os.path.join(d, n)))
+        except Exception:
+            return None
+    return "%s/hypr/%s/.socket2.sock" % (run, sig)
+
+
+def niri_loop():
+    """niri: the same for its event stream (borders come from its config, so nothing to do on reloads)"""
+    while True:
+        try:
+            p = subprocess.Popen(["niri", "msg", "-j", "event-stream"], stdout=subprocess.PIPE, text=True)
+            poke()
+            for line in p.stdout:
+                if line.startswith(('{"WorkspaceActivated', '{"WorkspacesChanged')):
+                    poke()
+                if line.startswith('{"WorkspaceActivated'):
+                    close_editor()
+            p.wait()
+        except Exception:
+            pass
+        time.sleep(1)       # niri restarted: listen again
+
+
+def main():
+    lock = open(os.path.expanduser("~/.cache/rice/ws-watch.lock") if os.path.isdir(os.path.expanduser("~/.cache/rice"))
+                else "/tmp/rice-ws-watch-%d.lock" % os.getuid(), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        sys.exit(0)  # already running
+    if os.environ.get("NIRI_SOCKET"):
+        niri_loop()
+        return
+    while True:
+        path = sock_path()
+        if not path or not os.path.exists(path):
+            time.sleep(2)
+            continue
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(path)
+            poke()
+            buf = b""
+            while True:
+                data = s.recv(4096)
+                if not data:
+                    break
+                buf += data
+                *lines, buf = buf.split(b"\n")
+                if any(l.startswith(EVENTS) for l in lines):
+                    poke()
+                if any(l.startswith((b"workspace>>", b"workspacev2>>", b"activespecial>>")) for l in lines):
+                    close_editor()
+                if any(l.startswith(b"configreloaded>>") for l in lines):
+                    after_reload()
+        except OSError:
+            pass
+        time.sleep(1)  # Hyprland restarted: reconnect
+
+
+if __name__ == "__main__":
+    main()

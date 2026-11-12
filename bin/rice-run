@@ -1,0 +1,20 @@
+#!/bin/sh
+# rice-run: runs one of the shell's tools with a full PATH.
+#   rice-run TOOL [ARGS...]      e.g. rice-run rice-notify keep
+# swaync can be started by D-Bus or systemd with a very short PATH (on NixOS it has no python3 then),
+# so the scripts it runs on a new or clicked notification go through this first.
+#
+# It also lets go of swaync's output pipe at once: swaync 0.12 crashes (munmap_chunk(): invalid pointer)
+# when that pipe is still open after the script has ended, for example because the script left a
+# player or a copy of itself running. Nothing we run needs to talk back to swaync.
+exec </dev/null >/dev/null 2>&1
+u="${USER:-$(id -un 2>/dev/null)}"
+PATH="$HOME/.local/bin:/run/wrappers/bin:$HOME/.nix-profile/bin:/etc/profiles/per-user/$u/bin:/nix/var/nix/profiles/default/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
+export PATH
+[ $# -gt 0 ] || { echo "usage: rice-run TOOL [ARGS...]" >&2; exit 2; }
+tool="$1"; shift
+[ -f "$HOME/.local/bin/$tool" ] && tool="$HOME/.local/bin/$tool"
+case "$(head -c 64 "$tool" 2>/dev/null)" in
+  *python3*) exec python3 "$tool" "$@" ;;
+  *) exec "$tool" "$@" ;;
+esac

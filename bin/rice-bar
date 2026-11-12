@@ -1,0 +1,196 @@
+#!/usr/bin/env python3
+"""rice-bar: the DarkShadow bar, the Quickshell bar of this shell (Settings > DarkShadow bar and Bar layout).
+
+  rice-bar state                  JSON for the settings app (options and layout)
+  rice-bar set KEY VALUE          style (flat|island|islands|pills|notch|dynamic), island_dynamic|island_hover|island_volume|island_ws|island_notifs (on|off), autohide, shadow, position (top|bottom|left|right), height, opacity, tray_size (12-28),
+                                  workspaces, seconds, ws_style (dots|pacman|letters|numbers), logo (auto|apps|blackhole|moon|arch|gentoo|...), logo_color (default|white|gold|ice|rose|violet|theme)
+  rice-bar layout-set JSON        {"left": [...], "center": [...], "right": [...]}
+  rice-bar layout-add ZONE NAME [BEFORE]   put a module on the bar (ZONE left|center|right)
+  rice-bar layout-reset           the default layout
+  rice-bar on | off               off: use Waybar again (the old bar), on: the DarkShadow bar again
+  rice-bar enabled                exit code 0 while the DarkShadow bar is on
+  rice-bar migrate                installer: a config from before the DarkShadow bar (or none) turns it on once
+  rice-bar start                  autostart: Waybar only when the DarkShadow bar is off
+Modules: launcher workspaces title media island tray volume network bluetooth battery notifications power visualizer
+         weather sysmon date music (these open a small card: the forecast, CPU / RAM / disk / swap, the week and your tasks,
+         the song with its lyrics)
+"""
+import json
+import os
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/bar.json"
+DEFAULTS = {"enabled": True, "style": "dynamic", "position": "top", "height": 38, "workspaces": 5,
+            "seconds": False, "opacity": 0.72, "ws_style": "dots", "logo": "auto", "autohide": False, "shadow": True,
+            "island_dynamic": True, "island_hover": True, "island_volume": True, "island_ws": True, "island_notifs": True, "tray_size": 18,
+            "island_date": False, "island_weather": True, "island_charge": True, "island_tab": "today", "island_close": 4,
+            "logo_color": "default", "title_icon": "right"}
+CHOICES = {"style": ("flat", "island", "islands", "pills", "notch", "dynamic"), "position": ("top", "bottom", "left", "right"),
+           "ws_style": ("dots", "pacman", "letters", "numbers"), "title_icon": ("left", "right", "off"),
+           "logo_color": ("default", "white", "gold", "ice", "rose", "violet", "theme"), "island_tab": ("today", "system", "about"),
+           "logo": ("auto", "apps", "blackhole", "moon", "tux", "arch", "gentoo", "fedora", "debian", "ubuntu", "nixos", "cachyos", "endeavouros",
+                    "manjaro", "linuxmint", "opensuse", "void", "alpine", "pop", "kali", "centos", "raspbian",
+                    "elementary", "zorin", "nobara", "artix", "slackware", "mageia", "rocky")}
+BOOLS = ("enabled", "seconds", "autohide", "shadow", "island_dynamic", "island_hover", "island_volume", "island_ws", "island_notifs",
+         "island_date", "island_weather", "island_charge")
+RANGES = {"height": (28, 56), "workspaces": (3, 10), "opacity": (0.3, 1.0), "tray_size": (12, 28), "island_close": (2, 10)}
+# V3.36: the island is the clock (the old "clock" module becomes the island)
+MODULES = ["launcher", "workspaces", "title", "media", "island", "tray", "volume", "network", "bluetooth", "battery",
+           "notifications", "power", "visualizer", "weather", "sysmon", "date", "music"]
+DEFAULT_LAYOUT = {"left": ["launcher", "workspaces", "title"], "center": ["island"],
+                  "right": ["music", "tray", "volume", "bluetooth", "network", "battery", "notifications", "power"]}
+
+
+def clean_layout(raw):
+    """only known modules, each once; the ones nobody placed are 'available'"""
+    seen = set()
+    out = {}
+    for z in ("left", "center", "right"):
+        out[z] = []
+        for m in (raw.get(z) if isinstance(raw, dict) and isinstance(raw.get(z), list) else []):
+            if m == "clock":
+                m = "island"
+            if m in MODULES and m not in seen:
+                seen.add(m)
+                out[z].append(m)
+    out["available"] = [m for m in MODULES if m not in seen]
+    return out
+
+
+def load():
+    c = dict(DEFAULTS)
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        raw = {}
+    for k, d in DEFAULTS.items():
+        v = raw.get(k, d)
+        if k in BOOLS:
+            c[k] = v is True if k in raw else d
+        elif k == "style" and v == "google":
+            c[k] = "dynamic"        # V3.30: the Google style became Dynamic
+        elif k in CHOICES:
+            c[k] = v if v in CHOICES[k] else d
+        elif k == "opacity":
+            try:
+                c[k] = round(max(RANGES[k][0], min(RANGES[k][1], float(v))), 2)
+            except Exception:
+                c[k] = d
+        else:
+            try:
+                c[k] = int(max(RANGES[k][0], min(RANGES[k][1], float(v))))
+            except Exception:
+                c[k] = d
+    lay = raw.get("layout", DEFAULT_LAYOUT) if "layout" in raw else DEFAULT_LAYOUT
+    # V4.29: the Music module comes onto your bar once (on the right, first); take it off and it stays off
+    if raw.get("music_added") is not True and isinstance(lay, dict):
+        lay = {z: list(lay.get(z) or []) for z in ("left", "center", "right")}
+        if not any("music" in lay[z] for z in lay):
+            lay["right"].insert(0, "music")
+        c["music_added"] = True
+        c["_migrated"] = True
+    elif raw.get("music_added") is True:
+        c["music_added"] = True
+    c["layout"] = clean_layout(lay)
+    c["v"] = raw.get("v", 1) if isinstance(raw.get("v", 1), int) else 1
+    if c.pop("_migrated", False) and raw:
+        try:
+            save(c)
+        except OSError:
+            pass
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"))
+    os.replace(tmp, CFG)
+
+
+def sh(cmd):
+    subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def waybar_stop():
+    sh("pkill -x waybar; pkill -x .waybar-wrapped; pkill -f waybar-autohide")
+
+
+def waybar_start():
+    sh("pgrep -x waybar >/dev/null || pgrep -x .waybar-wrapped >/dev/null || (setsid waybar >/dev/null 2>&1 &)")
+
+
+def main(a):
+    cmd = a[0] if a else "state"
+    c = load()
+    if cmd == "state":
+        print(json.dumps(c))
+    elif cmd == "layout-set" and len(a) == 2:
+        try:
+            c["layout"] = clean_layout(json.loads(a[1]))
+        except ValueError:
+            sys.exit("layout-set: JSON like {\"left\": [...], \"center\": [...], \"right\": [...]}")
+        save(c)
+    elif cmd == "layout-add" and len(a) >= 3 and a[1] in ("left", "center", "right") and a[2] in MODULES:
+        lay = c["layout"]
+        for z in ("left", "center", "right"):
+            lay[z] = [m for m in lay[z] if m != a[2]]
+        before = a[3] if len(a) > 3 else ""
+        i = lay[a[1]].index(before) if before in lay[a[1]] else len(lay[a[1]])
+        lay[a[1]].insert(i, a[2])
+        c["layout"] = clean_layout(lay)
+        save(c)
+    elif cmd == "layout-reset":
+        c["layout"] = clean_layout(DEFAULT_LAYOUT)
+        save(c)
+    elif cmd == "on":
+        c["enabled"] = True
+        save(c)
+        waybar_stop()
+    elif cmd == "off":
+        c["enabled"] = False
+        save(c)
+        waybar_start()
+    elif cmd == "migrate":
+        try:
+            raw = json.load(open(CFG))
+        except Exception:
+            raw = {}
+        if raw.get("v", 1) < 2:
+            c["enabled"] = True
+        c["v"] = 2
+        save(c)
+        print("DarkShadow bar " + ("on" if c["enabled"] else "off (your choice)"))
+    elif cmd == "enabled":
+        sys.exit(0 if c["enabled"] else 1)
+    elif cmd == "start":
+        if c["enabled"]:
+            waybar_stop()
+        else:
+            waybar_start()
+    elif cmd == "set" and len(a) == 3:
+        k, v = a[1], a[2]
+        if k == "enabled":
+            return main(["on" if v.lower() in ("1", "true", "on", "yes") else "off"])
+        if k not in DEFAULTS:
+            sys.exit("unknown key: " + k)
+        if k in BOOLS:
+            c[k] = v.lower() in ("1", "true", "on", "yes")
+        elif k in CHOICES:
+            if v not in CHOICES[k]:
+                sys.exit("%s: %s" % (k, "|".join(CHOICES[k])))
+            c[k] = v
+        elif k == "opacity":
+            c[k] = round(max(RANGES[k][0], min(RANGES[k][1], float(v))), 2)
+        else:
+            c[k] = int(max(RANGES[k][0], min(RANGES[k][1], float(v))))
+        save(c)
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

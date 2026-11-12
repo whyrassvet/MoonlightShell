@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""rice-todo: the list behind the To-do desktop widget (~/.config/rice/todo.json).
+
+  rice-todo list                 the tasks as JSON: [{"t": "text", "done": false}, ...]
+  rice-todo add TEXT...          add a task
+  rice-todo toggle N             tick or untick task N (0 is the first)
+  rice-todo remove N             delete task N
+  rice-todo clear                delete the ticked tasks
+"""
+import fcntl
+import json
+import os
+import sys
+
+DIR = os.path.expanduser("~/.config/rice")
+FILE = DIR + "/todo.json"
+MAX = 60
+
+
+def load():
+    try:
+        raw = json.load(open(FILE))
+    except Exception:
+        return []
+    out = []
+    for x in raw if isinstance(raw, list) else []:
+        if isinstance(x, dict) and isinstance(x.get("t"), str) and x["t"].strip():
+            out.append({"t": x["t"].strip()[:200], "done": x.get("done") is True})
+    return out[:MAX]
+
+
+def save(items):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(items, f, indent=1)
+    os.replace(tmp, FILE)
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else "list"
+    os.makedirs(DIR, exist_ok=True)
+    lk = open(DIR + "/.todo.lock", "w")
+    fcntl.flock(lk, fcntl.LOCK_EX)
+    items = load()
+    if cmd == "list":
+        print(json.dumps(items))
+        return
+    if cmd == "add":
+        t = " ".join(a[2:]).strip()
+        if not t:
+            sys.exit("add: what to do?")
+        items.append({"t": t[:200], "done": False})
+    elif cmd in ("toggle", "remove"):
+        try:
+            i = int(a[2])
+            if not 0 <= i < len(items):
+                raise ValueError
+        except (IndexError, ValueError):
+            sys.exit("%s: a task number (0 is the first)" % cmd)
+        if cmd == "toggle":
+            items[i]["done"] = not items[i]["done"]
+        else:
+            items.pop(i)
+    elif cmd == "clear":
+        items = [x for x in items if not x["done"]]
+    else:
+        sys.exit(__doc__)
+    save(items[:MAX])
+
+
+main(sys.argv)

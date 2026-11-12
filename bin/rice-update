@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""rice-update: updates for DarkShadow's Shell.
+
+  rice-update               install the newest version (runs ./install.sh --update in the repo)
+  rice-update check [--json] [--offline]
+                            compare your version with the newest one on GitHub
+  rice-update watch         background: checks after login and every 15 minutes, shows a notification
+  rice-update notify        show the "Update is Available!" notification now (to try it)
+  rice-update gui           update in the background for Settings > Update Center (no terminal): the steps go to
+                            ~/.cache/rice/update-live.log, the state to ~/.cache/rice/update-live.json
+"""
+import fcntl
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+INSTALLED = DIR + "/version"
+CACHE = HOME + "/.cache/rice"
+STATE = CACHE + "/update.json"
+NOTIFIED = CACHE + "/update-notified"
+LIVE_LOG = CACHE + "/update-live.log"
+LIVE = CACHE + "/update-live.json"
+RAW = "https://raw.githubusercontent.com/shadowww-dev/DarkShadowShell/main/VERSION"
+FIRST_WAIT = 45            # seconds after login
+EVERY = 15 * 60            # GitHub is asked every 15 minutes
+TICK = 30                  # a check from the About tab of the dashboard is noticed within this many seconds
+APP = "DarkShadow's Shell"
+ICON = HOME + "/.local/share/rice/icon.png"
+
+
+def repo():
+    try:
+        r = open(DIR + "/repo").read().strip()
+        if r and os.path.exists(r + "/install.sh"):
+            return r
+    except OSError:
+        pass
+    r = HOME + "/shadows-shell"
+    return r if os.path.exists(r + "/install.sh") else None
+
+
+def key(v):
+    """'2.02' < '2.1' == '2.10' < '3.0' (the part after the dot reads like decimals)"""
+    try:
+        major, _, minor = v.strip().lstrip("vV").partition(".")
+        return (int(major), float("0." + (minor or "0")))
+    except ValueError:
+        return (0, 0.0)
+
+
+def clean(v):
+    v = (v or "").strip().lstrip("vV")
+    return v if v and key(v) > (0, 0.0) else ""
+
+
+def installed():
+    try:
+        return clean(open(INSTALLED).read()) or "2.01"
+    except OSError:
+        return "2.01"   # installs from before versions existed
+
+
+def git(r, *a, timeout=25):
+    # never a login window: no prompt, and no credential helper (a helper like Git Credential Manager opened a GitHub
+    # sign-in window during updates; the shell is public, reading it needs no login)
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="true", SSH_ASKPASS="true", GCM_INTERACTIVE="never")
+    return subprocess.run(["git", "-c", "credential.helper=", "-C", r] + list(a), capture_output=True, text=True,
+                          timeout=timeout, env=env)
+
+
+NEW_URL = "https://github.com/shadowww-dev/DarkShadowShell.git"
+
+
+def fix_remote(r):
+    """the project moved (shadows-shell -> DarkShadowShell): an old address goes to the new one, before GitHub's
+    redirect is the thing that asks for a login"""
+    try:
+        u = git(r, "remote", "get-url", "origin", timeout=5).stdout.strip()
+        if "shadowww-dev/shadows-shell" in u:
+            git(r, "remote", "set-url", "origin", NEW_URL, timeout=5)
+    except Exception:
+        pass
+
+
+def news(text, version):
+    """first lines of the CHANGELOG entry for this version"""
+    out, on = [], False
+    for ln in (text or "").splitlines():
+        h = ln.strip()
+        if h.startswith("## "):
+            if on:
+                break
+            on = h[3:].strip().lstrip("vV").startswith(version)
+            continue
+        if on and h.startswith(("- ", "* ")):
+            out.append(h[2:].strip())
+    return out
+
+
+def latest(offline=False):
+    """newest version: GitHub (through your repo's git remote), else the raw file, else your repo.
+    Also: how many new commits GitHub has that this computer does not (an update without a new number)."""
+    r = repo()
+    found, err = [], ""
+    latest.ahead, latest.sha, latest.log = 0, "", ""
+    if r and os.path.isdir(r + "/.git") and shutil.which("git"):
+        try:
+            if not offline:
+                fix_remote(r)
+                f = git(r, "fetch", "--quiet")
+                if f.returncode != 0:
+                    err = (f.stderr.strip().splitlines() or ["git fetch failed"])[-1]
+            refs = []
+            u = git(r, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", timeout=5)
+            if u.returncode == 0 and u.stdout.strip():
+                refs.append(u.stdout.strip())
+            refs += ["origin/main", "origin/master"]
+            for ref in refs:
+                s = git(r, "show", ref + ":VERSION", timeout=5)
+                if s.returncode == 0 and clean(s.stdout):
+                    found.append(clean(s.stdout))
+                    a = git(r, "rev-list", "--count", "HEAD.." + ref, timeout=5)
+                    latest.ahead = int(a.stdout.strip() or 0) if a.returncode == 0 else 0
+                    h = git(r, "rev-parse", "--short", ref, timeout=5)
+                    latest.sha = h.stdout.strip() if h.returncode == 0 else ""
+                    cl = git(r, "show", ref + ":CHANGELOG.md", timeout=5)
+                    latest.log = cl.stdout if cl.returncode == 0 else ""
+                    break
+        except Exception as e:
+            err = str(e)
+    if not found and not offline and shutil.which("curl"):
+        try:
+            c = subprocess.run(["curl", "-fsSL", "--max-time", "15", RAW], capture_output=True, text=True, timeout=20)
+            if c.returncode == 0 and clean(c.stdout):
+                found.append(clean(c.stdout))
+                err = ""
+        except Exception as e:
+            err = err or str(e)
+    if r:
+        try:
+            found.append(clean(open(r + "/VERSION").read()))   # pulled but not installed yet
+        except OSError:
+            pass
+        if not latest.log:
+            try:
+                latest.log = open(r + "/CHANGELOG.md").read()
+            except OSError:
+                pass
+    found = [v for v in found if v]
+    return (max(found, key=key) if found else ""), err
+
+
+def check(offline=False):
+    have = installed()
+    new, err = latest(offline)
+    newer = bool(new) and key(new) > key(have)
+    ahead = getattr(latest, "ahead", 0)
+    out = {"installed": have, "latest": new or have, "update": newer or ahead > 0,
+           "changes": ahead, "commit": getattr(latest, "sha", ""),
+           "news": news(getattr(latest, "log", ""), new or have)[:4],
+           "checked": int(time.time()), "error": err if not new else ""}
+    os.makedirs(CACHE, exist_ok=True)
+    try:
+        json.dump(out, open(STATE, "w"))
+    except OSError:
+        pass
+    return out
+
+
+def terminal_update():
+    t = os.environ.get("TERMINAL") or "kitty"
+    if not shutil.which(t):
+        t = next((x for x in ("kitty", "foot", "alacritty", "wezterm", "konsole", "gnome-terminal") if shutil.which(x)), t)
+    cmd = [t, "-e", HOME + "/.local/bin/rice-update"]
+    if os.access(HOME + "/.local/bin/rice-term", os.X_OK):        # your terminal (Settings > Look & Feel)
+        cmd = [HOME + "/.local/bin/rice-term", "-e", HOME + "/.local/bin/rice-update"]
+    subprocess.Popen(cmd, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def open_center():
+    """Settings > Update Center (the update runs there, with its steps shown live); a terminal without Settings"""
+    rs = HOME + "/.local/bin/rice-settings"
+    if os.access(rs, os.X_OK):
+        subprocess.Popen([rs, "35"], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        terminal_update()
+
+
+def live():
+    try:
+        return json.load(open(LIVE))
+    except (OSError, ValueError):
+        return {}
+
+
+def alive(pid):
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def put_live(**kw):
+    os.makedirs(CACHE, exist_ok=True)
+    tmp = LIVE + ".new"
+    with open(tmp, "w") as f:
+        json.dump(kw, f)
+    os.replace(tmp, LIVE)
+
+
+def gui(args):
+    """the update without a terminal: install.sh --update --yes --no-packages, detached from Settings (the update
+    puts new Settings files in place, so Settings reloads in the middle; this keeps running and Settings reads on)"""
+    st = live()
+    if st.get("state") == "running" and alive(st.get("pid")):
+        print("already updating")
+        return 0
+    r = repo()
+    os.makedirs(CACHE, exist_ok=True)
+    if not r:
+        open(LIVE_LOG, "w").write("    \u2718 Could not find your copy of the repo (~/shadows-shell). Clone it again:\n"
+                                  "      git clone https://github.com/shadowww-dev/DarkShadowShell ~/shadows-shell\n")
+        put_live(state="failed", code=1, started=int(time.time()), ended=int(time.time()), pid=0)
+        return 1
+    if os.fork() != 0:
+        return 0
+    os.setsid()
+    if os.fork() != 0:
+        os._exit(0)
+    log = open(LIVE_LOG, "w", buffering=1)
+    t0 = int(time.time())
+    put_live(state="running", code=-1, started=t0, ended=0, pid=os.getpid(), was=installed())
+    env = dict(os.environ, RICE_GUI="1", NO_COLOR="1", GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never")
+    env.pop("SUDO_ASKPASS", None)
+    want = ["--update", "--yes"] + (args if args else ["--no-packages"])
+    try:
+        code = subprocess.call(["./install.sh"] + want, cwd=r, env=env, stdin=subprocess.DEVNULL,
+                               stdout=log, stderr=subprocess.STDOUT)
+    except Exception as e:
+        log.write("    \u2718 %s\n" % e)
+        code = 1
+    try:
+        check(offline=True)
+    except Exception:
+        pass
+    put_live(state="done" if code == 0 else "failed", code=code, started=t0, ended=int(time.time()), pid=0,
+             was=live().get("was", ""), now=installed())
+    os._exit(0)
+
+
+def body(st):
+    v = st["latest"]
+    head = "<b>Update V%s</b>" % v
+    if st.get("installed") and st["installed"] != v:
+        head += "  ·  you have V%s" % st["installed"]
+    elif st.get("changes"):
+        head += "  ·  %d new change%s" % (st["changes"], "" if st["changes"] == 1 else "s")
+    lines = [head]
+    for n in (st.get("news") or [])[:3]:
+        lines.append("•  " + n.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return "\n".join(lines)
+
+
+def notify(st):
+    """the popup; clicking it (or Update now) opens the update in a terminal"""
+    if not shutil.which("notify-send"):
+        return
+    icon = ICON if os.path.exists(ICON) else "system-software-update"
+    try:
+        r = subprocess.run(["notify-send", "-a", APP, "-i", icon, "-u", "normal", "-t", "20000",
+                            "-c", "system.update",
+                            "-A", "default=Update now", "-A", "update=Update now", "-A", "later=Later",
+                            "--wait", "Update is Available!", body(st)],
+                           capture_output=True, text=True, timeout=6 * 3600)
+        if r.stdout.strip() in ("default", "update"):
+            open_center()
+    except Exception:
+        pass
+
+
+def notify_bg(st):
+    if os.fork() == 0:
+        os.setsid()
+        notify(st)
+        os._exit(0)
+
+
+def maybe_notify(st):
+    """show the popup once per new version / new push"""
+    if not st or not st.get("update"):
+        return
+    try:
+        told = open(NOTIFIED).read().strip()
+    except OSError:
+        told = ""
+    tag = "%s %s" % (st.get("latest", ""), st.get("commit", ""))
+    if told != tag:
+        open(NOTIFIED, "w").write(tag)
+        notify_bg(st)
+
+
+def mtime(p):
+    try:
+        return os.path.getmtime(p)
+    except OSError:
+        return 0
+
+
+def watch():
+    os.makedirs(CACHE, exist_ok=True)
+    lk = open(CACHE + "/update-watch.lock", "w")
+    try:
+        fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return  # already running
+    time.sleep(FIRST_WAIT)
+    last, seen = 0.0, 0.0
+    while True:
+        try:
+            if time.time() - last >= EVERY:
+                last = time.time()
+                st = check()
+                seen = mtime(STATE)
+                maybe_notify(st)
+            else:
+                # the About tab of the dashboard (or rice-update check) found something: tell right away
+                m = mtime(STATE)
+                if m and m != seen:
+                    seen = m
+                    maybe_notify(json.load(open(STATE)))
+        except Exception:
+            pass
+        time.sleep(TICK)
+
+
+def run(args):
+    r = repo()
+    if not r:
+        print("Could not find your copy of the repo. Clone it again:")
+        print("  git clone https://github.com/shadowww-dev/DarkShadowShell ~/shadows-shell")
+        input("Press Enter to close")
+        sys.exit(1)
+    os.chdir(r)
+    code = subprocess.call(["./install.sh", "--update"] + args)
+    print()
+    try:
+        input("Press Enter to close")
+    except EOFError:
+        pass
+    sys.exit(code)
+
+
+def main(a):
+    cmd = a[1] if len(a) > 1 else ""
+    if cmd == "check":
+        st = check(offline="--offline" in a)
+        if "--json" in a:
+            print(json.dumps(st))
+        elif st["update"]:
+            extra = (" (%d new changes)" % st["changes"]) if st["latest"] == st["installed"] and st["changes"] else ""
+            print("Update V%s is available%s (you have V%s). Run: rice-update" % (st["latest"], extra, st["installed"]))
+            for n in st["news"]:
+                print("  - " + n)
+        else:
+            print("Up to date: V%s%s" % (st["installed"], ("  (could not check: %s)" % st["error"]) if st["error"] else ""))
+    elif cmd == "watch":
+        watch()
+    elif cmd == "notify":
+        st = check(offline="--offline" in a)
+        if not st["news"]:
+            st["news"] = ["This is how the update notification looks"]
+        notify_bg(st)
+    elif cmd == "gui":
+        sys.exit(gui(a[2:]))
+    elif cmd == "center":
+        open_center()
+    elif cmd in ("", "run"):
+        run(a[2:])
+    elif cmd in ("-h", "--help", "help"):
+        print(__doc__)
+    else:
+        run(a[1:])   # pass flags like --no-packages on to install.sh
+
+
+if __name__ == "__main__":
+    main(sys.argv)

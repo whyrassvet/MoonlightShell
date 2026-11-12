@@ -1,0 +1,21 @@
+# Локальные инструкции и журнал агента
+/AGENTS.md
+/PROJECT.md
+/CHANGELOG.md
+/.opencode/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Локальные настройки, журналы и временные файлы
+*.bak*
+.env
+.env.*
+!.env.example
+*.log
+*.swp
+*.swo
+*~
+.DS_Store

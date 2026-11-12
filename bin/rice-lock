@@ -1,0 +1,593 @@
+#!/usr/bin/env python3
+"""rice-lock: idle timers (hypridle) and the lock screen (hyprlock). Settings > Idle & Lockscreen.
+
+  rice-lock state | set KEY VALUE | apply | reset | restore
+  rice-lock now                                 lock the screen (hypridle, SUPER + L, the power menu ...)
+  rice-lock preview                             show the lock screen in a window (Esc closes it)
+  rice-lock test                                lock for real, but it unlocks itself after 30 seconds (try the keyboard)
+  rice-lock greet | notif | notif-count | weather | media     (text for the lock screen)
+  rice-lock screen off|on                       (used by hypridle)
+
+V3.45: the lock screen is the shell's own (Quickshell, ~/.config/quickshell/rice-lockscreen), in Material 3.
+It locks with the Wayland session-lock protocol and checks the password with PAM. If it does not lock within a
+few seconds or quits without unlocking, hyprlock takes over, so you are never locked out. engine = hyprlock keeps
+the old hyprlock screen.
+"""
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/lock.json"
+DESKTOP = DIR + "/desktop.json"
+FONTS = DIR + "/fonts.json"
+HYPR = HOME + "/.config/hypr"
+LOCK = HYPR + "/hyprlock.conf"
+IDLE = HYPR + "/hypridle.conf"
+WAYBAR_COLORS = HOME + "/.config/waybar/colors.css"
+WALL = HOME + "/.cache/hyprquickpaper-current"
+WEATHER = HOME + "/.cache/rice/weather.txt"
+BIN = HOME + "/.local/bin"
+
+DEFAULTS = {
+    # idle
+    "lock_after": 5, "screen_off_after": 0, "suspend_after": 15, "lock_before_sleep": True,
+    # lock screen
+    "managed": True, "style": "cards", "layout": "center", "clock": "big", "clock_24h": True, "accent_clock": False, "clock_font": "default",
+    "date": True, "greeting": True, "avatar": True, "input": "pill", "power": True,
+    "background": "screenshot", "blur": 3, "dim": 0.5,
+    "media": True, "resources": False, "notifications": True, "weather": False,
+    "engine": "shell",
+}
+INTS = {"lock_after": (0, 120), "screen_off_after": (0, 120), "suspend_after": (0, 240), "blur": (0, 4)}
+FLOATS = {"dim": (0.2, 1.0)}
+# clock fonts (rice-fonts downloads them; "default" is your Numbers font from Settings > Services)
+CLOCK_FONTS = {"default": "", "bebas": "Bebas Neue", "orbitron": "Orbitron", "outfit": "Outfit",
+               "grotesk": "Space Grotesk", "unbounded": "Unbounded", "shoulders": "Big Shoulders Display"}
+CHOICES = {"engine": ["shell", "hyprlock"], "style": ["cards", "classic"], "layout": ["center", "left"], "clock": ["big", "stacked", "minimal", "shape"], "clock_font": list(CLOCK_FONTS),
+           "input": ["pill", "box", "line"], "background": ["screenshot", "wallpaper", "color"]}
+
+
+def die(m):
+    sys.stderr.write(m + "\n")
+    sys.exit(1)
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def load():
+    c = dict(DEFAULTS)
+    raw = None
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        # first run: take the old Interface > Lock screen switches
+        try:
+            lk = json.load(open(DESKTOP)).get("lock", {})
+            raw = {"media": lk.get("media", True) is True or lk.get("media") is None,
+                   "resources": lk.get("widgets") is True}
+        except Exception:
+            raw = {}
+    for k, d in DEFAULTS.items():
+        v = raw.get(k, d)
+        if isinstance(d, bool):
+            c[k] = v is True
+        elif k in CHOICES:
+            c[k] = v if v in CHOICES[k] else d
+        elif k in FLOATS:
+            try:
+                c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+            except Exception:
+                c[k] = d
+        else:
+            try:
+                c[k] = int(clamp(float(v), *INTS[k]))
+            except Exception:
+                c[k] = d
+    return c
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    json.dump(c, open(tmp, "w"))
+    os.replace(tmp, CFG)
+
+
+def fonts():
+    try:
+        f = json.load(open(FONTS))
+    except Exception:
+        f = {}
+    d = "Google Sans Flex"     # the interface font since V3.23; old configs had JetBrains everywhere
+
+    def g(k):
+        v = f.get(k) or ""
+        if not v or (f.get("v", 1) < 2 and v == "JetBrainsMono Nerd Font"):
+            return ""
+        return v.replace('"', "")
+    return g("numbers") or g("main") or d, g("main") or d
+
+
+def accent():
+    try:
+        m = re.search(r"@define-color\s+accent\s+#([0-9a-fA-F]{6})", open(WAYBAR_COLORS).read())
+        if m:
+            h = m.group(1)
+            return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        pass
+    return (212, 212, 212)
+
+
+def rgba(rgb, a):
+    return "rgba(%d, %d, %d, %.2f)" % (rgb[0], rgb[1], rgb[2], a)
+
+
+WHITE = (255, 255, 255)
+
+
+def write_if_changed(path, text, bak):
+    old = open(path).read() if os.path.exists(path) else None
+    if old == text:
+        return False
+    if old is not None and not os.path.exists(path + bak):
+        shutil.copy2(path, path + bak)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    open(tmp, "w").write(text)
+    os.replace(tmp, path)
+    return True
+
+
+# ---------------- hyprlock ----------------
+def block(kind, props):
+    out = [kind + " {", "    monitor ="]
+    for k, v in props:
+        out.append("    %s = %s" % (k, v))
+    out.append("}")
+    return "\n".join(out)
+
+
+def font_installed(fam):
+    try:
+        out = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return True
+    return any(fam.lower() == x.strip().lower() for line in out.splitlines() for x in line.split(","))
+
+
+def lock_text(c):
+    numf, mainf = fonts()
+    clockf = CLOCK_FONTS.get(c.get("clock_font", "default")) or numf
+    acc = accent()
+    left = c["layout"] == "left"
+    ha = "left" if left else "center"
+    X = 110 if left else 0
+    txt = rgba(WHITE, 0.90)
+    dim = rgba(WHITE, 0.55)
+    clock_col = rgba(acc, 0.95) if c["accent_clock"] else rgba(WHITE, 0.92)
+    # white hours, grey minutes (or your Theme color with Accent clock)
+    min_hex = "#%02x%02x%02x" % (acc if c["accent_clock"] else WHITE)
+    out = ["# DarkShadow's Shell lock screen. Generated by rice-lock (Settings > Idle & Lockscreen).",
+           "# Turn off 'Manage lock screen' there to keep your own file. (rice-lock.conf is not used)", ""]
+
+    if c["background"] == "color":
+        bg = [("color", "rgba(12, 12, 14, 1.0)")]
+    else:
+        path = "screenshot"
+        if c["background"] == "wallpaper":
+            try:
+                w = open(WALL).read().strip()
+                if os.path.isfile(w):
+                    path = w
+            except Exception:
+                pass
+        bg = [("path", path), ("blur_passes", str(c["blur"])), ("blur_size", "6"),
+              ("brightness", "%.2f" % c["dim"]), ("contrast", "0.9")]
+    out.append(block("background", bg))
+    out.append("general {\n    hide_cursor = false\n}")
+
+    def label(text, size, y, color=txt, font=mainf, valign="center", x=None, onclick=None, h=None):
+        p = [("text", text), ("color", color), ("font_size", str(size)), ("font_family", font)]
+        if onclick:
+            p.append(("onclick", onclick))
+        p += [("position", "%d, %d" % (X if x is None else x, y)), ("halign", h or ha), ("valign", valign)]
+        return block("label", p)
+
+    hfmt = "%H" if c["clock_24h"] else "%I"
+    tfmt = "%H:%M" if c["clock_24h"] else "%I:%M %p"
+    st = c["clock"]
+    # vertical slots (valign center, y up) for each clock style
+    if st == "stacked":
+        ys = {"avatar": 400, "date": 30, "greet": -6, "input": -96, "power": -190}
+        out.append(label('cmd[update:10000] echo "<b>$(date +%s)</b>"' % hfmt, 120, 250, clock_col, clockf))
+        out.append(label('cmd[update:10000] echo "$(date +%M)"', 120, 118, rgba(acc if c["accent_clock"] else WHITE, 0.55), clockf))
+    elif st == "minimal":
+        ys = {"avatar": 150, "date": None, "greet": 50, "input": -40, "power": -140}
+        out.append(label('cmd[update:10000] echo "$(date +\'%s\')"' % tfmt, 30, -48, clock_col, clockf, valign="top"))
+        if c["date"]:
+            out.append(label("cmd[update:60000] date '+%A, %d %B'", 14, -96, dim, mainf, valign="top"))
+    else:
+        ys = {"avatar": 310, "date": 66, "greet": 30, "input": -50, "power": -146}
+        rest = ":%M %p" if not c["clock_24h"] else ":%M"
+        out.append(label('cmd[update:10000] echo "<b>$(date +%s)</b><span foreground=\'%s\' alpha=\'55%%\'>$(date +\'%s\')</span>"'
+                         % (hfmt, min_hex, rest), 96, 160, clock_col, clockf))
+
+    if c["date"] and ys["date"] is not None:
+        out.append(label("cmd[update:60000] date '+%A, %d %B'", 18, ys["date"], dim))
+    if c["greeting"]:
+        out.append(label("cmd[update:60000] %s/rice-lock greet" % BIN, 15, ys["greet"] if c["date"] or st == "minimal" else ys["date"], txt))
+    if c["avatar"] and os.path.exists(HOME + "/.face"):
+        out.append(block("image", [("path", HOME + "/.face"), ("size", "96"), ("rounding", "-1"), ("border_size", "2"),
+                                   ("border_color", rgba(acc, 0.7)), ("position", "%d, %d" % (X, ys["avatar"])),
+                                   ("halign", ha), ("valign", "center")]))
+
+    # password field
+    inp = [("size", "300, 52"), ("dots_size", "0.2"), ("dots_spacing", "0.3"), ("dots_center", "true"),
+           ("font_color", "rgb(230, 230, 230)"), ("check_color", rgba(acc, 0.6)), ("fail_color", "rgba(220, 80, 80, 0.6)"),
+           ("fade_on_empty", "false"), ("font_family", mainf),
+           ("placeholder_text", '<span foreground="##ffffff77">Enter password</span>')]
+    if c["input"] == "box":
+        inp += [("outline_thickness", "2"), ("rounding", "12"), ("outer_color", rgba(acc, 0.55)),
+                ("inner_color", "rgba(0, 0, 0, 0.35)")]
+    elif c["input"] == "line":
+        inp += [("outline_thickness", "0"), ("rounding", "0"), ("inner_color", "rgba(0, 0, 0, 0.0)")]
+    else:
+        inp += [("outline_thickness", "0"), ("rounding", "-1"), ("inner_color", "rgba(255, 255, 255, 0.08)")]
+    inp += [("position", "%d, %d" % (X, ys["input"])), ("halign", ha), ("valign", "center")]
+    out.append(block("input-field", inp))
+    if c["input"] == "line":
+        out.append(block("shape", [("size", "300, 2"), ("color", rgba(acc, 0.8)), ("rounding", "0"), ("border_size", "0"),
+                                   ("position", "%d, %d" % (X, ys["input"] - 28)), ("halign", ha), ("valign", "center")]))
+
+    if c["power"]:
+        logout = BIN + "/logout" if os.access(BIN + "/logout", os.X_OK) else BIN + "/rice-wm exit"
+        icons = [(chr(0xF0343), logout), (chr(0xF0425), "$HOME/.local/bin/rice-sys poweroff"),
+                 (chr(0xF0904), "$HOME/.local/bin/rice-sys suspend"), (chr(0xF0709), "$HOME/.local/bin/rice-sys reboot")]
+        for i, (g, cmd) in enumerate(icons):
+            x = (X + i * 90) if left else (-135 + i * 90)
+            out.append(label("<span>%s </span>" % g, 30, ys["power"], rgba(WHITE, 0.6), mainf, x=x, onclick=cmd))
+
+    # small lines at the bottom of the screen
+    y = 40
+    for key, text, upd in (("media", "media", 1500), ("resources", "resources", 3000),
+                           ("weather", "weather", 600000), ("notifications", "notif", 3000)):
+        if not c[key]:
+            continue
+        cmd = "%s/rice-sysline" % BIN if key == "resources" else "%s/rice-lock %s" % (BIN, text)
+        out.append(label("cmd[update:%d] %s" % (upd, cmd), 14, y, rgba(WHITE, 0.75), mainf, valign="bottom"))
+        y += 32
+    return "\n\n".join(out) + "\n"
+
+
+# ---------------- hypridle ----------------
+def idle_text(c):
+    sc = BIN + "/rice-lock screen"
+    g = ["general {", "    lock_cmd = %s now" % (BIN + "/rice-lock")]
+    if c["lock_before_sleep"]:
+        g.append("    before_sleep_cmd = loginctl lock-session")
+    g.append("    after_sleep_cmd = %s on" % sc)
+    g.append("}")
+    out = ["# Generated by rice-lock (Settings > Idle & Lockscreen). 0 minutes = never.", "\n".join(g)]
+    if c["lock_after"] > 0:
+        out.append("# lock\nlistener {\n    timeout = %d\n    on-timeout = loginctl lock-session\n}" % (c["lock_after"] * 60))
+    if c["screen_off_after"] > 0:
+        out.append("# screen off\nlistener {\n    timeout = %d\n    on-timeout = %s off\n    on-resume = %s on\n}"
+                   % (c["screen_off_after"] * 60, sc, sc))
+    if c["suspend_after"] > 0:
+        out.append("# sleep\nlistener {\n    timeout = %d\n    on-timeout = $HOME/.local/bin/rice-sys suspend\n}" % (c["suspend_after"] * 60))
+    return "\n\n".join(out) + "\n"
+
+
+def restart_idle():
+    """hypridle reads its config only at start. Restart it once and make sure only one copy runs."""
+    if not shutil.which("hypridle"):
+        return
+    q = dict(stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t = dict(q, timeout=10)
+    try:
+        active = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "hypridle.service"], **t).returncode == 0
+    except Exception:
+        active = False
+    if active:
+        try:
+            subprocess.run(["systemctl", "--user", "restart", "hypridle.service"], **t)
+            main = subprocess.run(["systemctl", "--user", "show", "-p", "MainPID", "--value", "hypridle.service"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+        except Exception:
+            main = ""
+        try:
+            pids = subprocess.run(["pgrep", "-x", "hypridle"], capture_output=True, text=True).stdout.split()
+        except Exception:
+            pids = []
+        for pid in pids:
+            if pid != main:
+                subprocess.run(["kill", pid], **q)
+    else:
+        # no systemd (Void) or a minimal system without pkill: every step may be missing, none may stop the update
+        try:
+            subprocess.run(["pkill", "-x", "hypridle"], **q)
+        except Exception:
+            pass
+        try:
+            subprocess.Popen(["hypridle"], start_new_session=True, **q)
+        except Exception:
+            pass
+
+
+def apply(c):
+    if c["managed"]:
+        write_if_changed(LOCK, lock_text(c), ".bak-rice-lock")
+    if write_if_changed(IDLE, idle_text(c), ".bak-rice-idle"):
+        restart_idle()
+
+
+# ---------------- lock screen helpers ----------------
+def greet():
+    h = time.localtime().tm_hour
+    g = "Good night" if h < 5 else "Good morning" if h < 12 else "Good afternoon" if h < 18 else "Good evening"
+    import getpass
+    print("%s, %s" % (g, os.environ.get("USER") or getpass.getuser()))
+
+
+def shell_notify():
+    try:
+        return json.load(open(HOME + "/.config/rice/cc.json")).get("engine") == "shell"
+    except Exception:
+        return False
+
+
+def notif():
+    try:
+        if shell_notify():
+            n = int(open(HOME + "/.cache/rice/notif-count").read().strip() or 0)
+        else:
+            n = int(subprocess.run(["swaync-client", "-c", "-sw"], capture_output=True, text=True, timeout=2).stdout.strip() or 0)
+    except Exception:
+        n = 0
+    print("" if n <= 0 else "%s  %d notification%s" % (chr(0xF009A), n, "" if n == 1 else "s"))
+
+
+def weather():
+    try:
+        age = time.time() - os.path.getmtime(WEATHER)
+    except OSError:
+        age = 1e9
+    if age > 1800 and os.access(BIN + "/rice-weather", os.X_OK):
+        subprocess.Popen([BIN + "/rice-weather"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        cond, temp, *_ = open(WEATHER).read().strip().split("|")
+        print("%s  %s" % (cond.strip(), temp.strip()))
+    except Exception:
+        print("")
+
+
+def media():
+    try:
+        t = subprocess.run([BIN + "/rice-nowplaying"], capture_output=True, text=True, timeout=3).stdout.strip()
+    except Exception:
+        t = ""
+    print("%s  %s" % (chr(0xF0388), t) if t else "")
+
+
+def notif_count():
+    """how many notifications wait (the shell's own, or swaync's)"""
+    try:
+        if json.load(open(DIR + "/cc.json")).get("engine") == "shell":
+            print(open(HOME + "/.cache/rice/notif-count").read().strip() or "0")
+            return
+    except Exception:
+        pass
+    if shell_notify():
+        print(0)
+        return
+    try:
+        print(int(subprocess.run(["swaync-client", "-c", "-sw"], capture_output=True, text=True, timeout=2).stdout.strip() or 0))
+    except Exception:
+        print(0)
+
+
+# ---------------- the lock screen itself ----------------
+QS = HOME + "/.config/quickshell"
+LOCKQS = QS + "/rice-lockscreen"
+ACTIVE = HOME + "/.cache/rice/lock-active"
+SHOT = HOME + "/.cache/rice/lock-shot.png"
+FALLBACK = HOME + "/.cache/rice/lock-fallback"
+# the parts it shares with the desktop shell (copied from rice-desktop when they are newer)
+SHARED = ["Look", "Fonts", "DashFont", "MIcon", "T", "Blob", "ShapeImage", "WavyLine", "WavyArc", "Player",
+          "RoundImage", "NPal", "Trigger", "Shadow"]
+
+
+def sync_shared():
+    for n in SHARED:
+        src, dst = QS + "/rice-desktop/%s.qml" % n, LOCKQS + "/%s.qml" % n
+        try:
+            if os.path.exists(src) and (not os.path.exists(dst) or open(src).read() != open(dst).read()):
+                tmp = dst + ".rice-new"
+                shutil.copyfile(src, tmp)
+                os.replace(tmp, dst)
+        except OSError:
+            pass
+
+
+def qs_bin():
+    return shutil.which("qs") or shutil.which("quickshell")
+
+
+def running(name):
+    return subprocess.run(["pgrep", "-x", name], capture_output=True).returncode == 0
+
+
+def our_lock_running():
+    """the shell's lock screen is up (not just its preview)"""
+    return os.path.exists(ACTIVE) and subprocess.run(["pgrep", "-f", "rice-lockscreen"], capture_output=True).returncode == 0
+
+
+def hyprlock():
+    if shutil.which("hyprlock") and not running("hyprlock"):
+        subprocess.run(["hyprlock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def wall_path():
+    try:
+        return open(WALL).read().strip()
+    except OSError:
+        return ""
+
+
+def lock_now(preview=False, test=False):
+    c = load()
+    qs = qs_bin()
+    if not preview and (running("hyprlock") or our_lock_running()):
+        return
+    if c["engine"] == "hyprlock" or not qs or not os.path.exists(LOCKQS + "/shell.qml"):
+        if not preview:
+            hyprlock()
+        return
+    sync_shared()
+    os.makedirs(HOME + "/.cache/rice", exist_ok=True)
+    # Background: Screenshot: what is on the screen now (taken before the lock covers it)
+    if c["background"] == "screenshot" and shutil.which("grim"):
+        try:
+            subprocess.run(["grim", "-l", "1", SHOT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+        except Exception:
+            pass
+    else:
+        try:
+            os.remove(SHOT)
+        except OSError:
+            pass
+    env = dict(os.environ)
+    if preview:
+        env["RICE_LOCK_PREVIEW"] = "1"
+        log = open(HOME + "/.cache/rice/lockscreen-preview.log", "w")
+        subprocess.Popen([qs, "-p", LOCKQS], env=env, stdout=log, stderr=log, start_new_session=True)
+        return
+    if test:
+        env["RICE_LOCK_TEST"] = "1"
+    for f in (ACTIVE, FALLBACK):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    log = open(HOME + "/.cache/rice/lockscreen.log", "w")
+    p = subprocess.Popen([qs, "-p", LOCKQS], env=env, stdout=log, stderr=log)
+    # it must lock within 6 seconds (the compositor confirms it and the screen writes lock-active)
+    t0 = time.time()
+    while time.time() - t0 < 6 and p.poll() is None and not os.path.exists(ACTIVE):
+        time.sleep(0.1)
+    if not os.path.exists(ACTIVE):
+        p.kill()
+        hyprlock()
+        return
+    rc = p.wait()
+    # "Keyboard not working?" on the lock screen: it quit without unlocking, hyprlock takes the lock over
+    if os.path.exists(FALLBACK):
+        for f in (ACTIVE, FALLBACK):
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        hyprlock()
+        return
+    # it quit, but not by unlocking (a crash): hyprlock takes the lock over (allow_session_lock_restore)
+    if os.path.exists(ACTIVE):
+        try:
+            os.remove(ACTIVE)
+        except OSError:
+            pass
+        if rc != 0:
+            hyprlock()
+
+
+def screen(state):
+    # Hyprland (its dispatchers, old and new) or niri (power-off-monitors): rice-wm knows which one runs
+    try:
+        subprocess.run([BIN + "/rice-wm", "dpms", state], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6)
+    except Exception:
+        pass
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ""
+    if cmd == "state":
+        out = load()
+        out["has_face"] = os.path.exists(HOME + "/.face")
+        out["accent"] = "#%02x%02x%02x" % accent()
+        out["wall"] = wall_path()
+        out["shot"] = SHOT if out.get("background") == "screenshot" and os.path.exists(SHOT) else ""
+        out["pam"] = "hyprlock" if os.path.exists("/etc/pam.d/hyprlock") else "login"
+        out["shell_ok"] = bool(qs_bin()) and os.path.exists(LOCKQS + "/shell.qml")
+        out["has_hyprlock"] = bool(shutil.which("hyprlock"))
+        print(json.dumps(out))
+        return
+    if cmd in ("now", "preview", "test"):
+        lock_now(preview=cmd == "preview", test=cmd == "test")
+        return
+    helpers = {"greet": greet, "notif": notif, "notif-count": notif_count, "weather": weather, "media": media}
+    if cmd in helpers:
+        helpers[cmd]()
+        return
+    if cmd == "screen":
+        screen(argv[2] if len(argv) > 2 and argv[2] in ("on", "off") else "on")
+        return
+    os.makedirs(DIR, exist_ok=True)
+    lk = open(DIR + "/.lock.lock", "w")
+    fcntl.flock(lk, fcntl.LOCK_EX)
+    if cmd == "apply":
+        c = load()
+        save(c)
+        apply(c)
+    elif cmd == "set":
+        if len(argv) < 4 or argv[2] not in DEFAULTS:
+            die("usage: rice-lock set KEY VALUE   keys: " + " ".join(DEFAULTS))
+        k, v = argv[2], argv[3]
+        c = load()
+        d = DEFAULTS[k]
+        if isinstance(d, bool):
+            c[k] = v.lower() in ("1", "true", "on", "yes")
+        elif k in CHOICES:
+            if v not in CHOICES[k]:
+                die("%s: %s" % (k, "|".join(CHOICES[k])))
+            c[k] = v
+        elif k in FLOATS:
+            c[k] = round(clamp(float(v), *FLOATS[k]), 2)
+        else:
+            c[k] = int(clamp(float(v), *INTS[k]))
+        save(c)
+        apply(c)
+        # a clock font that is not here yet: download it (rice-fonts), then write the lock screen again
+        fam = CLOCK_FONTS.get(c.get("clock_font", "default"))
+        if k == "clock_font" and fam and not font_installed(fam) and os.path.exists(BIN + "/rice-fonts"):
+            subprocess.Popen(["bash", "-c", '"$1" >/dev/null 2>&1; "$2" apply', "_", BIN + "/rice-fonts", BIN + "/rice-lock"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    elif cmd == "reset":
+        if os.path.exists(CFG):
+            os.remove(CFG)
+        c = load()
+        save(c)
+        apply(c)
+    elif cmd == "restore":
+        for p, b in ((LOCK, ".bak-rice-lock"), (IDLE, ".bak-rice-idle")):
+            if os.path.exists(p + b):
+                shutil.copy2(p + b, p)
+                print("restored", p)
+        c = load()
+        c["managed"] = False
+        save(c)
+        restart_idle()
+    else:
+        die(__doc__)
+
+
+if __name__ == "__main__":
+    main(sys.argv)

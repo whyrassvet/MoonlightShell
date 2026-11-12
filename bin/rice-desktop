@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+dir="$HOME/.config/quickshell/rice-desktop"
+running() { pgrep -f "quickshell/rice-desktop" >/dev/null; }
+# a fresh login never starts in the widget editor
+[ "$1" = start ] && "$HOME/.local/bin/desktop-set" edit off >/dev/null 2>&1
+case "$1" in
+  start|ensure)
+    # the request files the shell watches (launcher, menus, dashboard): they exist from the start, so the
+    # shell can watch them instead of looking at them several times a second
+    mkdir -p "$HOME/.cache/rice"
+    for f in launcher-open clip-open wifi-open bluetooth-open power-open volume-open dashboard-open; do
+      [ -e "$HOME/.cache/rice/$f" ] || : >"$HOME/.cache/rice/$f"
+    done
+    "$HOME/.local/bin/rice-bar" enabled 2>/dev/null || "$HOME/.local/bin/waybar-autohide" ensure >/dev/null 2>&1 &
+    [ -x "$HOME/.local/bin/rice-ws-watch" ] && setsid -f "$HOME/.local/bin/rice-ws-watch" >/dev/null 2>&1
+    [ -x "$HOME/.local/bin/rice-update" ] && setsid -f "$HOME/.local/bin/rice-update" watch >/dev/null 2>&1
+    [ -x "$HOME/.local/bin/rice-welcome" ] && "$HOME/.local/bin/rice-welcome" start >/dev/null 2>&1 &
+    # the clipboard history (SUPER + V): every copy goes into cliphist
+    [ -x "$HOME/.local/bin/rice-clip" ] && "$HOME/.local/bin/rice-clip" watch >/dev/null 2>&1 &
+    # Hyprland: the blur rules of the dock, widgets, game bar and desktop menu (written again when one is missing)
+    if [ "$1" = start ] && [ -n "$HYPRLAND_INSTANCE_SIGNATURE" ] && ! grep -q rice-deskmenu "$HOME/.config/hypr/rice-dock.lua" 2>/dev/null; then
+      "$HOME/.local/bin/desktop-set" dock-blur >/dev/null 2>&1 &
+    fi
+    # two screens: their places and the main screen are saved once, so the next boot keeps them (not swapped)
+    if [ "$1" = start ]; then ( sleep 6; "$HOME/.local/bin/rice-screens" keep >/dev/null 2>&1 ) & fi
+    # the live wallpaper again, and the wallpaper slideshow when it is on
+    [ "$1" = start ] && [ -x "$HOME/.local/bin/rice-walls" ] && "$HOME/.local/bin/rice-walls" start >/dev/null 2>&1 &
+    running && exit 0
+    [ -f "$dir/shell.qml" ] || { echo "missing $dir/shell.qml" >&2; exit 1; }
+    "$HOME/.local/bin/desktop-set" state >/dev/null 2>&1
+    setsid -f qs -n -p "$dir" >/dev/null 2>&1
+    ;;
+  stop) pkill -f "quickshell/rice-desktop" ;;
+  restart)
+    pkill -f "quickshell/rice-desktop"
+    # background helpers: start the new versions
+    pkill -f "\.local/bin/rice-ws-watch" 2>/dev/null
+    pkill -f "\.local/bin/rice-update watch" 2>/dev/null
+    sleep 0.2
+    [ -x "$HOME/.local/bin/rice-ws-watch" ] && setsid -f "$HOME/.local/bin/rice-ws-watch" >/dev/null 2>&1
+    [ -x "$HOME/.local/bin/rice-update" ] && setsid -f "$HOME/.local/bin/rice-update" watch >/dev/null 2>&1
+    for _ in 1 2 3 4 5 6 7 8 9 10; do running || break; sleep 0.2; done
+    setsid -f qs -n -p "$dir" >/dev/null 2>&1
+    ;;
+  status) running && echo running || { echo stopped; exit 1; } ;;
+  *) echo "usage: rice-desktop start|stop|restart|ensure|status" >&2; exit 1 ;;
+esac

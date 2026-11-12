@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# old name for the screen recorder: the same as SUPER + SHIFT + R (press again to stop).
+# Sound: Settings > Hot corners > Record sound / Record microphone.
+exec "$HOME/.local/bin/rice-hotcorner" record region

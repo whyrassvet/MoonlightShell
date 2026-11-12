@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# The weather for the widgets and the lock screen: "condition|temperature|place" (wttr.in).
+# °C or °F follows Settings > Language & region (rice-region).
+# rice-weather json: more for the Forecast widget (now, feels like, high / low, rain, the next hours), as one JSON
+# line, kept for 30 minutes in ~/.cache/rice/weather.json
+unit="m"
+grep -q '"units": *"f"' "$HOME/.config/rice/region.json" 2>/dev/null && unit="u"
+if [ "${1:-}" = json ]; then
+  f="$HOME/.cache/rice/weather.json"
+  mkdir -p "$HOME/.cache/rice"
+  if [ -s "$f" ] && [ -n "$(find "$f" -mmin -30 2>/dev/null)" ]; then cat "$f"; exit 0; fi
+  raw="$(curl -s -m 12 "wttr.in/?format=j1&lang=en")" || { [ -s "$f" ] && cat "$f"; exit 1; }
+  j="$(printf '%s' "$raw" | python3 -c '
+import json, sys, datetime
+f = sys.argv[1] == "u"
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+def t(o, k):
+    return int(float(o.get(k + ("F" if f else "C"), 0)))
+c = d["current_condition"][0]
+area = (d.get("nearest_area") or [{}])[0]
+place = ((area.get("areaName") or [{}])[0].get("value", ""))
+country = ((area.get("country") or [{}])[0].get("value", ""))
+days = d.get("weather") or []
+now = datetime.datetime.now()
+hours = []
+for di, day in enumerate(days[:2]):
+    for h in day.get("hourly", []):
+        hh = int(h.get("time", "0")) // 100
+        at = datetime.datetime.strptime(day["date"], "%Y-%m-%d").replace(hour=hh)
+        if at <= now:
+            continue
+        hours.append({"h": hh, "t": t(h, "temp"), "c": (h.get("weatherDesc") or [{}])[0].get("value", "").strip(),
+                      "rain": int(h.get("chanceofrain", 0))})
+out = {"temp": t(c, "temp_"), "feels": t(c, "FeelsLike"), "cond": (c.get("weatherDesc") or [{}])[0].get("value", "").strip(),
+       "hum": int(c.get("humidity", 0)), "wind": int(c.get("windspeedMiles" if f else "windspeedKmph", 0)),
+       "unit": "F" if f else "C", "place": place, "country": country,
+       "hi": t(days[0], "maxtemp") if days else 0, "lo": t(days[0], "mintemp") if days else 0,
+       "hours": hours[:5],
+       "days": [{"d": x["date"], "hi": t(x, "maxtemp"), "lo": t(x, "mintemp"),
+                 "c": ((x.get("hourly") or [{}]*5)[4].get("weatherDesc") or [{}])[0].get("value", "").strip()} for x in days[:3]]}
+print(json.dumps(out))
+' "$unit")" || { [ -s "$f" ] && cat "$f"; exit 1; }
+  printf '%s\n' "$j" > "$f"
+  printf '%s\n' "$j"
+  exit 0
+fi
+out="$(curl -s -m 10 "wttr.in/?format=%C|%t|%l&${unit}&lang=en")" || exit 1
+case "$out" in ""|*Unknown*|*"<"*|*"|"*"|"*"|"*) exit 1 ;; esac
+mkdir -p "$HOME/.cache/rice"
+printf '%s\n' "$out" > "$HOME/.cache/rice/weather.txt"
+printf '%s\n' "$out"

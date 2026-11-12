@@ -1,0 +1,180 @@
+{
+  "layer": "top",
+  "position": "top",
+  "spacing": 3,
+  "height": 1,
+  "margin-top": 0,
+  "margin-left": 0,
+  "margin-right": 0,
+  "modules-left": [
+    "image#nix",
+    "group/ws",
+    "mpris"
+  ],
+  "modules-center": [],
+  "modules-right": [
+    "wireplumber",
+    "clock",
+    "group/apps",
+    "custom/notification",
+    "custom/lock"
+  ],
+  "hyprland/workspaces": {
+    "format": "{id}",
+    "on-click": "activate",
+    "persistent-workspaces": {
+      "*": 4
+    }
+  },
+  "mpris": {
+    "format": "{artist} - {title}",
+    "format-paused": "󰐊 {artist} - {title}",
+    "max-length": 60,
+    "tooltip": true,
+    "player": "spotify"
+  },
+  "wireplumber": {
+    "scroll-step": 5,
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 muted",
+    "on-click": "pavucontrol",
+    "format-icons": {
+      "default": [
+        "󰕿",
+        "󰖀",
+        "󰕾"
+      ],
+      "headphones": "󰋋",
+      "headset": "󰋎"
+    }
+  },
+  "clock": {
+    "format": "{:%H:%M}",
+    "tooltip": false,
+    "calendar": {
+      "mode": "month",
+      "format": {
+        "months": "<span color='#F6F5F4'><b>{}</b></span>",
+        "weekdays": "<span color='#666666'><b>{}</b></span>",
+        "days": "<span color='#b5b5b5'>{}</span>",
+        "today": "<span color='#ff4d4d'><b><u>{}</u></b></span>"
+      }
+    },
+    "first-day-of-week": 1,
+    "on-click": "pkill -x gsimplecal || XDG_CONFIG_HOME=$HOME/.config/gsimplecal-home GTK_THEME=Adwaita:dark gsimplecal"
+  },
+  "group/apps": {
+    "orientation": "horizontal",
+    "modules": [
+      "bluetooth",
+      "network"
+    ]
+  },
+  "tray": {
+    "icon-size": 18,
+    "spacing": 8,
+    "show-passive-items": true
+  },
+  "bluetooth": {
+    "format": "",
+    "format-connected": "",
+    "tooltip-format": "{status}",
+    "tooltip-format-connected": "{device_alias}",
+    "on-click": "overskride"
+  },
+  "custom/notification": {
+    "tooltip": false,
+    "format": "{icon}",
+    "format-icons": {
+      "notification": "󱅫",
+      "none": "",
+      "dnd-notification": "<span foreground=\"#666666\"></span>",
+      "dnd-none": "<span foreground=\"#666666\"></span>",
+      "inhibited-notification": "󱅫",
+      "inhibited-none": "",
+      "dnd-inhibited-notification": "<span foreground=\"#666666\"></span>",
+      "dnd-inhibited-none": "<span foreground=\"#666666\"></span>"
+    },
+    "return-type": "json",
+    "exec": "swaync-client -swb",
+    "on-click": "swaync-client -t -sw",
+    "on-click-right": "swaync-client -d -sw",
+    "escape": true,
+    "exec-if": "which swaync-client"
+  },
+  "custom/lock": {
+    "format": "󰐥",
+    "on-click": "hyprlock",
+    "tooltip": true,
+    "tooltip-format": "Lock Screen"
+  },
+  "network": {
+    "format-wifi": "󰖩",
+    "format-ethernet": "󰖩",
+    "format-disconnected": "<span foreground=\"#666666\">󰖪</span>",
+    "format-disabled": "<span foreground=\"#666666\">󰖪</span>",
+    "tooltip-format-wifi": "{essid} ({signalStrength}%)",
+    "tooltip-format-ethernet": "{ifname}",
+    "tooltip-format-disconnected": "Disconnected",
+    "on-click": "$HOME/.local/bin/wifi-menu"
+  },
+  "group/ws": {
+    "orientation": "horizontal",
+    "modules": [
+      "custom/ws1",
+      "custom/ws2",
+      "custom/ws3",
+      "custom/ws4"
+    ]
+  },
+  "custom/ws1": {
+    "exec": "$HOME/.local/bin/ws-state 1",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 8,
+    "format": "{}",
+    "tooltip": false,
+    "on-click": "$HOME/.local/bin/ws-go 1",
+    "on-scroll-up": "$HOME/.local/bin/ws-go e-1",
+    "on-scroll-down": "$HOME/.local/bin/ws-go e+1"
+  },
+  "custom/ws2": {
+    "exec": "$HOME/.local/bin/ws-state 2",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 8,
+    "format": "{}",
+    "tooltip": false,
+    "on-click": "$HOME/.local/bin/ws-go 2",
+    "on-scroll-up": "$HOME/.local/bin/ws-go e-1",
+    "on-scroll-down": "$HOME/.local/bin/ws-go e+1"
+  },
+  "custom/ws3": {
+    "exec": "$HOME/.local/bin/ws-state 3",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 8,
+    "format": "{}",
+    "tooltip": false,
+    "on-click": "$HOME/.local/bin/ws-go 3",
+    "on-scroll-up": "$HOME/.local/bin/ws-go e-1",
+    "on-scroll-down": "$HOME/.local/bin/ws-go e+1"
+  },
+  "custom/ws4": {
+    "exec": "$HOME/.local/bin/ws-state 4",
+    "return-type": "json",
+    "interval": 5,
+    "signal": 8,
+    "format": "{}",
+    "tooltip": false,
+    "on-click": "$HOME/.local/bin/ws-go 4",
+    "on-scroll-up": "$HOME/.local/bin/ws-go e-1",
+    "on-scroll-down": "$HOME/.local/bin/ws-go e+1"
+  },
+  "image#nix": {
+    "path": "/run/current-system/sw/share/icons/hicolor/scalable/apps/nix-snowflake-white.svg",
+    "size": 16,
+    "tooltip": false,
+    "on-click": "rofi -show drun"
+  }
+}

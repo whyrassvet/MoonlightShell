@@ -1,0 +1,38 @@
+[config]
+
+[templates.waybar]
+input_path = '~/.config/matugen/templates/waybar.css'
+output_path = '~/.config/waybar/colors.css'
+post_hook = 'setsid -f $HOME/.local/bin/waybar-reload'
+
+[templates.kitty]
+input_path = '~/.config/matugen/templates/kitty.conf'
+output_path = '~/.config/kitty/current-theme.conf'
+post_hook = 'pkill -SIGUSR1 kitty; setsid -f $HOME/.local/bin/rice-look colors >/dev/null 2>&1; true'
+
+[templates.cava]
+input_path = '~/.config/matugen/templates/cava'
+output_path = '~/.config/cava/config'
+post_hook = 'pkill -SIGUSR2 cava || true'
+
+[templates.btop]
+input_path = '~/.config/matugen/templates/btop.theme'
+output_path = '~/.config/btop/themes/matugen.theme'
+post_hook = 'pkill -SIGUSR2 btop || true'
+
+[templates.peaclock]
+input_path = '~/.config/matugen/templates/peaclock'
+output_path = '~/.config/peaclock/config'
+post_hook = 'pkill -USR1 -x peaclock || true'
+
+[templates.hyprborder]
+input_path = '~/.config/matugen/templates/border-colors.txt'
+output_path = '~/.config/hypr/border-colors.txt'
+post_hook = '$HOME/.local/bin/border-sync'
+
+
+# the palette for your apps (rice-theme: VSCodium / VS Code, Discord clients)
+[templates.palette]
+input_path = '~/.config/matugen/templates/palette.json'
+output_path = '~/.config/rice/palette.json'
+post_hook = 'setsid -f $HOME/.local/bin/rice-theme sync >/dev/null 2>&1; true'

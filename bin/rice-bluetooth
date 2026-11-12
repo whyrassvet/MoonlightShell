@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# rice-bluetooth [X [Y]]   open the Bluetooth menu under the bar (X: where the icon is, pixels from the left; Y: from the top, for a bar on the side)
+# rice-bluetooth list  devices for the menu: power, then one line per device  MAC|name|connected|paired|icon|battery
+if [ "${1:-}" = list ]; then
+  p=$(bluetoothctl show 2>/dev/null | sed -n 's/^[[:space:]]*Powered: //p' | head -1)
+  echo "power:${p:-no}"
+  bluetoothctl devices 2>/dev/null | awk '{print $2}' | while read -r m; do
+    [ -n "$m" ] || continue
+    i=$(bluetoothctl info "$m" 2>/dev/null)
+    n=$(printf '%s\n' "$i" | sed -n 's/^[[:space:]]*Name: //p' | head -1)
+    [ -n "$n" ] || continue
+    c=$(printf '%s\n' "$i" | sed -n 's/^[[:space:]]*Connected: //p' | head -1)
+    pr=$(printf '%s\n' "$i" | sed -n 's/^[[:space:]]*Paired: //p' | head -1)
+    ic=$(printf '%s\n' "$i" | sed -n 's/^[[:space:]]*Icon: //p' | head -1)
+    b=$(printf '%s\n' "$i" | sed -n 's/^[[:space:]]*Battery Percentage: .*(\([0-9]*\)).*/\1/p' | head -1)
+    printf '%s|%s|%s|%s|%s|%s\n' "$m" "$n" "$c" "$pr" "$ic" "$b"
+  done
+  exit 0
+fi
+if pgrep -f "quickshell/rice-desktop" >/dev/null 2>&1; then
+  mkdir -p "$HOME/.cache/rice"
+  printf '%s %s\n' "$(date +%s.%N)" "${1:-0} ${2:-}" >"$HOME/.cache/rice/bluetooth-open"
+else
+  # the shell is not running: start it, then open the menu
+  "$HOME/.local/bin/rice-desktop" start >/dev/null 2>&1
+  sleep 1.5
+  mkdir -p "$HOME/.cache/rice"
+  printf '%s %s\n' "$(date +%s.%N)" "${1:-0} ${2:-}" >"$HOME/.cache/rice/bluetooth-open"
+fi

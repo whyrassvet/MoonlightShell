@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""rice-busy: prints 1 while the screen has tiled windows on it, 0 when the desktop is empty.
+Floating windows (Settings, pop-ups, a floating-only layout) do not count: the widgets stay.
+
+  rice-busy [MONITOR]     MONITOR: name like DP-1 (default: the focused one)
+
+Listens to Hyprland's events (or niri's event stream) and prints a line only when the answer changes. The desktop
+widgets use it for "Auto-hide widgets" (Settings > Desktop): they hide while windows are open.
+"""
+import json
+import os
+import socket
+import subprocess
+import sys
+import time
+
+EVENTS = (b"openwindow>>", b"closewindow>>", b"movewindow", b"workspace", b"focusedmon>>", b"activespecial",
+          b"changefloatingmode>>", b"moveworkspace", b"destroyworkspace", b"createworkspace", b"fullscreen>>")
+
+
+def hypr(what):
+    try:
+        r = subprocess.run(["hyprctl", "-j", what], capture_output=True, text=True, timeout=3)
+        return json.loads(r.stdout)
+    except Exception:
+        return None
+
+
+def busy(mon_name):
+    mons = hypr("monitors")
+    clients = hypr("clients")
+    if not mons or clients is None:
+        return False
+    mon = None
+    for m in mons:
+        if (mon_name and m.get("name") == mon_name) or (not mon_name and m.get("focused")):
+            mon = m
+    if mon is None:
+        mon = mons[0]
+    ids = {mon.get("activeWorkspace", {}).get("id")}
+    sp = mon.get("specialWorkspace", {}) or {}
+    if sp.get("id"):
+        ids.add(sp.get("id"))
+    # only tiled (or fullscreen) windows hide the widgets; floating ones leave them alone
+    for c in clients:
+        if (c.get("workspace", {}) or {}).get("id") not in ids:
+            continue
+        if not c.get("mapped", True) or c.get("hidden", False):
+            continue
+        if c.get("floating", False) and not c.get("fullscreen", 0):
+            continue
+        return True
+    return False
+
+
+def niri_j(what):
+    try:
+        r = subprocess.run(["niri", "msg", "-j", what], capture_output=True, text=True, timeout=3)
+        return json.loads(r.stdout)
+    except Exception:
+        return None
+
+
+def niri_busy(mon_name):
+    """niri: tiled windows on the active workspace of that monitor (the focused one by default)"""
+    wss = niri_j("workspaces")
+    wins = niri_j("windows")
+    if not wss or wins is None:
+        return False
+    if not mon_name:
+        f = next((w for w in wss if w.get("is_focused")), None)
+        mon_name = f.get("output") if f else ""
+    act = next((w for w in wss if w.get("is_active") and (w.get("output") == mon_name or not mon_name)), None)
+    if not act:
+        return False
+    return any(w.get("workspace_id") == act["id"] and not w.get("is_floating") for w in wins)
+
+
+def niri_main(mon):
+    last = [None]
+
+    def say():
+        b = niri_busy(mon)
+        if b != last[0]:
+            last[0] = b
+            print("1" if b else "0", flush=True)
+
+    say()
+    while True:
+        try:
+            p = subprocess.Popen(["niri", "msg", "-j", "event-stream"], stdout=subprocess.PIPE, text=True)
+            for line in p.stdout:
+                if line.startswith(('{"Workspace', '{"Window')) and not line.startswith(('{"WindowFocusTimestamp', '{"WindowLayouts')):
+                    time.sleep(0.05)
+                    say()
+            p.wait()
+        except Exception:
+            pass
+        time.sleep(2)
+        say()
+
+
+def sock_path():
+    run = os.environ.get("XDG_RUNTIME_DIR", "/run/user/%d" % os.getuid())
+    sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "")
+    if not sig:
+        try:
+            sig = sorted(os.listdir(run + "/hypr"), key=lambda d: os.path.getmtime(run + "/hypr/" + d))[-1]
+        except Exception:
+            sig = ""
+    return "%s/hypr/%s/.socket2.sock" % (run, sig)
+
+
+def main():
+    mon = sys.argv[1] if len(sys.argv) > 1 else ""
+    if os.environ.get("NIRI_SOCKET"):
+        return niri_main(mon)
+    last = None
+
+    def say():
+        nonlocal last
+        b = busy(mon)
+        if b != last:
+            last = b
+            print("1" if b else "0", flush=True)
+
+    say()
+    while True:
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.connect(sock_path())
+            buf = b""
+            s.settimeout(4)
+            while True:
+                try:
+                    data = s.recv(4096)
+                except socket.timeout:
+                    say()          # a check now and then, in case an event was missed
+                    continue
+                if not data:
+                    break
+                buf += data
+                lines = buf.split(b"\n")
+                buf = lines.pop()
+                if any(l.startswith(EVENTS) for l in lines):
+                    time.sleep(0.06)    # let Hyprland finish the change
+                    say()
+        except (OSError, ValueError):
+            pass
+        time.sleep(2)
+        say()
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, BrokenPipeError):
+        pass

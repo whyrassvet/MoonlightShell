@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# rice-term: opens your terminal (Settings > Desktop > Look & Feel > Terminal). The keybinds, the Wi-Fi menu and
+# the updater call this, so they all open the terminal you picked.
+#   rice-term                          a terminal with your shell
+#   rice-term [--class NAME] [-e] CMD ARGS ...   a terminal that runs CMD (NAME: the window class for rules)
+cls=""
+if [ "$1" = "--class" ]; then cls="$2"; shift 2; fi
+[ "$1" = "-e" ] && shift
+
+t="$(cat "${XDG_CONFIG_HOME:-$HOME/.config}/rice/terminal" 2>/dev/null)"
+command -v "$t" >/dev/null 2>&1 || t=""
+if [ -z "$t" ]; then
+  for x in kitty foot alacritty ghostty wezterm konsole xterm; do
+    command -v "$x" >/dev/null 2>&1 && { t="$x"; break; }
+  done
+fi
+
+case "$t" in
+  kitty)
+    exec kitty ${cls:+--class "$cls"} "$@" ;;
+  foot)
+    exec foot ${cls:+--app-id="$cls"} "$@" ;;
+  alacritty)
+    if [ $# -gt 0 ]; then exec alacritty ${cls:+--class "$cls"} -e "$@"; else exec alacritty ${cls:+--class "$cls"}; fi ;;
+  ghostty)
+    # ghostty takes only application ids with a dot as a class
+    case "$cls" in *.*) ;; *) cls="" ;; esac
+    if [ $# -gt 0 ]; then exec ghostty ${cls:+--class="$cls"} -e "$@"; else exec ghostty ${cls:+--class="$cls"}; fi ;;
+  wezterm)
+    if [ $# -gt 0 ]; then exec wezterm start ${cls:+--class "$cls"} -- "$@"; else exec wezterm start ${cls:+--class "$cls"}; fi ;;
+  konsole)
+    if [ $# -gt 0 ]; then exec konsole -e "$@"; else exec konsole; fi ;;
+  xterm)
+    if [ $# -gt 0 ]; then exec xterm ${cls:+-class "$cls"} -e "$@"; else exec xterm; fi ;;
+  *)
+    echo "rice-term: no terminal found (install kitty)" >&2
+    command -v notify-send >/dev/null 2>&1 && notify-send "No terminal" "Install one in Settings > Desktop > Look & Feel"
+    exit 1 ;;
+esac

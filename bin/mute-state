@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+[ "$(LC_ALL=C pactl get-sink-mute @DEFAULT_SINK@)" = "Mute: yes" ] && echo true || echo false

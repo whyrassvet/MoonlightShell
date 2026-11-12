@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+import fcntl
+import json
+import os
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/rice"
+CFG = DIR + "/desktop.json"
+LOCK = DIR + "/.desktop.lock"
+LOCKCONF = HOME + "/.config/hypr/rice-lock.conf"
+HYPRLOCK = HOME + "/.config/hypr/hyprlock.conf"
+SOURCE_LINE = "source = ~/.config/hypr/rice-lock.conf"
+
+WIDGETS = ["weather", "media", "resources", "usercard", "calendar", "visualizer", "battery", "todo", "focus", "notes",
+           "gauge", "date", "sky", "nowring", "player", "playpill", "lyrics", "storage", "trio",
+           "forecast", "music", "datepill"]
+# what the widget editor stores per widget (Settings > Desktop > Edit widgets, or SUPER+ALT+W)
+GEOM = ("x", "y", "scale", "w", "h", "opacity", "bg", "style", "flip", "color", "font", "focus", "metric", "bars", "shape", "gap", "gain")
+# the visualizer's bars (Edit mode > Visualizer)
+VIZ = {"bars": ["16", "32", "48", "64"], "shape": ["square", "rounded", "pill"], "gap": ["thin", "normal", "wide"], "gain": ["1", "1.4", "2", "2.8"]}
+STYLES = {"visualizer": ["bars", "mirror", "wave", "dots"], "clock": ["digital", "line", "cookie", "pixel"],
+          "gauge": ["water", "pentagon", "cookie", "flower", "clover", "hexagon", "sun", "circle"],
+          "date": ["flower", "cookie", "clover", "sun", "square", "circle"]}
+METRICS = ["cpu", "ram", "gpu", "temp", "battery"]
+# visualizer colors; clock fonts (the same ones as the lock screen clock, rice-fonts downloads them)
+COLORS = {"visualizer": ["accent", "gradient", "rainbow", "mono"]}
+FONTS = {"default": "", "bebas": "Bebas Neue", "orbitron": "Orbitron", "outfit": "Outfit",
+         "grotesk": "Space Grotesk", "unbounded": "Unbounded", "shoulders": "Big Shoulders Display"}
+THEMES = ["shadow", "google", "outline"]
+DEFAULTS = {
+    "widgets": {w: {"enabled": False} for w in WIDGETS},
+    "clock": {"enabled": True, "onlyLocked": False, "placement": "draggable", "style": "digital", "font": "bebas"},   # the only widget at first: in the middle
+    "dock": {"enabled": False, "position": "bottom", "background": True, "hover": True, "pinnedStartup": False,
+             "media": True, "nowText": True, "pinButton": True, "appsButton": True, "tint": False, "shade": True, "appMenu": True,
+             "opacity": 0.78, "blur": True, "reserve": True,
+             "apps": ["kitty", "org.gnome.Nautilus", "firefox", "spotify", "discord", "steam"]},
+    "lock": {"toolbars": False, "widgets": False, "media": False},
+    # the game bar (SUPER + G, Settings > Gaming): how see-through it is and the blur behind it
+    "gamebar": {"opacity": 0.9, "blur": True},
+    "widgetBlur": True,
+    "widgetTheme": "google",  # how the widget cards look: Google (Material You); the other styles are gone
+    "widgetAdapt": True,      # text and cards turn light or dark with the wallpaper behind each widget
+    "autoHide": True,        # widgets hide while windows are open (Settings > Desktop); on from the start
+    "editing": False,
+}
+CHOICES = {"placement": ["draggable", "leastBusy", "mostBusy"], "style": ["digital", "line", "cookie", "pixel"], "font": list(FONTS)}
+
+
+def target(c, wid):
+    if wid == "clock":
+        return c["clock"]
+    if wid not in c["widgets"]:
+        die("unknown widget: " + wid + "  (" + ", ".join(WIDGETS + ["clock"]) + ")")
+    return c["widgets"][wid]
+
+
+def die(m):
+    sys.stderr.write(m + "\n")
+    sys.exit(1)
+
+
+def merge(base, over):
+    out = {}
+    for k, v in base.items():
+        if isinstance(v, dict):
+            out[k] = merge(v, over.get(k, {}) if isinstance(over.get(k), dict) else {})
+        else:
+            out[k] = over[k] if k in over else v
+    for k, v in over.items():
+        if k not in out and k in GEOM:
+            out[k] = v
+    return out
+
+
+def load():
+    try:
+        raw = json.load(open(CFG))
+    except Exception:
+        raw = {}
+    c = merge(DEFAULTS, raw)
+    # keep saved positions, sizes and looks
+    for w in WIDGETS + ["clock"]:
+        if w == "clock":
+            src, dst = raw.get("clock", {}), c["clock"]
+        else:
+            src = raw.get("widgets", {}).get(w, {}) if isinstance(raw.get("widgets"), dict) else {}
+            dst = c["widgets"][w]
+        if not isinstance(src, dict):
+            continue
+        for k in GEOM:
+            if k in src:
+                v = clean_geom(w, k, src[k])
+                if v is not None:
+                    dst[k] = v
+                else:
+                    dst.pop(k, None)
+    if isinstance(raw.get("dock", {}).get("apps"), list):
+        c["dock"]["apps"] = [str(a) for a in raw["dock"]["apps"]]
+    return c
+
+
+def clean_geom(wid, k, v):
+    try:
+        if k in ("x", "y"):
+            return int(max(0, float(v)))
+        if k in ("w", "h"):
+            return int(max(40, min(8000, float(v))))
+        if k == "scale":
+            return round(max(0.4, min(3.0, float(v))), 3)
+        if k in ("opacity", "bg"):
+            return round(max(0.0 if k == "bg" else 0.1, min(1.0, float(v))), 2)
+        if k == "flip":
+            return v is True or str(v).lower() in ("1", "true", "on", "yes")
+        if k == "style":
+            return v if v in STYLES.get(wid, []) else None
+        if k == "color":
+            return v if v in COLORS.get(wid, []) else None
+        if k == "font":
+            return v if wid == "clock" and v in FONTS else None
+        if k == "metric":
+            return v if wid == "gauge" and v in METRICS else None
+        if k == "focus":
+            return int(max(5, min(120, float(v)))) if wid == "focus" else None
+        if k in VIZ:
+            return str(v) if wid == "visualizer" and str(v) in VIZ[k] else None
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def save(c):
+    os.makedirs(DIR, exist_ok=True)
+    tmp = CFG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(c, f, indent=2)
+    os.replace(tmp, CFG)
+
+
+def tobool(v):
+    return str(v).lower() in ("1", "true", "on", "yes")
+
+
+def lock_conf(c):
+    L = ["# generated by desktop-set (Settings > Idle & Lockscreen). Do not edit."]
+    font = "Google Sans Flex"
+    try:
+        fj = json.load(open(os.path.expanduser("~/.config/rice/fonts.json")))
+        if fj.get("v", 1) >= 2 and fj.get("main"):
+            font = fj["main"].replace('"', "")
+    except Exception:
+        pass
+    col = "rgba(246, 245, 244, 0.9)"
+
+    def label(text, size, y):
+        return ["label {", "    monitor =", "    text = " + text, "    color = " + col,
+                "    font_size = %d" % size, "    font_family = " + font,
+                "    position = 0, %d" % y, "    halign = center", "    valign = bottom", "}"]
+    lk = c["lock"]
+    if lk["toolbars"]:
+        L += label("cmd[update:30000] echo \"$(date '+%A, %d %B')  ·  up $(uptime -p | sed 's/^up //')\"", 14, 36)
+    if lk["widgets"]:
+        L += label("cmd[update:3000] ~/.local/bin/rice-sysline", 16, 70)
+    if lk["media"]:
+        L += label("cmd[update:1500] ~/.local/bin/rice-nowplaying", 15, 110)
+    os.makedirs(os.path.dirname(LOCKCONF), exist_ok=True)
+    tmp = LOCKCONF + ".tmp"
+    open(tmp, "w").write("\n".join(L) + "\n")
+    os.replace(tmp, LOCKCONF)
+    try:
+        s = open(HYPRLOCK).read()
+        if "rice-lock.conf" not in s:
+            if not os.path.exists(HYPRLOCK + ".bak-rice"):
+                open(HYPRLOCK + ".bak-rice", "w").write(s)
+            open(HYPRLOCK, "w").write(s.rstrip() + "\n\n" + SOURCE_LINE + "\n")
+    except FileNotFoundError:
+        pass
+
+
+def dock_blur(c):
+    """Blur behind the dock and the desktop widgets: Hyprland layer rules in rice-dock.lua, so the switches can turn them off."""
+    hypr = HOME + "/.config/hypr"
+    lua, main = hypr + "/rice-dock.lua", hypr + "/hyprland.lua"
+    text = "-- generated by desktop-set (Settings > Dock, Settings > Widgets, Settings > Gaming)\n"
+    if c["dock"].get("blur", True):
+        text += ('hl.layer_rule({\n    name  = "rice-dock-blur",\n    match = { namespace = "rice-dock" },\n'
+                 '    blur = true,\n    ignore_alpha = 0.1,\n})\n')
+    # the desktop menu (right-click the desktop): frosted glass; it animates itself (no layer animation).
+    # Gaming mode and Light mode turn Hyprland's blur off altogether, so it is solid then
+    text += ('hl.layer_rule({\n    name  = "rice-deskmenu-blur",\n    match = { namespace = "rice-deskmenu" },\n'
+             '    blur = true,\n    ignore_alpha = 0.3,\n    no_anim = true,\n})\n')
+    if c.get("gamebar", {}).get("blur", True):
+        text += ('hl.layer_rule({\n    name  = "rice-gamebar-blur",\n    match = { namespace = "rice-gamebar" },\n'
+                 '    blur = true,\n    ignore_alpha = 0.3,\n})\n')
+    if c.get("widgetBlur", True):
+        # only where a card is (the rest of the widget surface is fully clear)
+        text += ('hl.layer_rule({\n    name  = "rice-widget-blur",\n    match = { namespace = "rice-widget" },\n'
+                 '    blur = true,\n    ignore_alpha = 0.2,\n})\n')
+    os.makedirs(hypr, exist_ok=True)
+    open(lua, "w").write(text)
+    try:
+        s = open(main).read()
+        import re
+        n = re.sub(r'hl\.layer_rule\(\{\s*name\s*=\s*"rice-dock-blur",.*?\}\)\n?\n?', "", s, flags=re.S)
+        if 'require("rice-dock")' not in n:
+            a = 'require("rice-settings")'
+            n = n.replace(a, a + '\nrequire("rice-dock")') if n.count(a) == 1 else n.rstrip("\n") + '\nrequire("rice-dock")\n'
+        if n != s:
+            if not os.path.exists(main + ".bak-dock"):
+                open(main + ".bak-dock", "w").write(s)
+            open(main, "w").write(n)
+    except FileNotFoundError:
+        pass
+    try:
+        subprocess.run([os.path.expanduser("~/.local/bin/rice-wm"), "reload"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+    except Exception:
+        pass
+
+
+def font_wanted(key):
+    fam = FONTS.get(key, "")
+    if not fam:
+        return
+    try:
+        out = subprocess.run(["fc-list", ":", "family"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return
+    if any(fam.lower() == x.strip().lower() for line in out.splitlines() for x in line.split(",")):
+        return
+    fonts, desk = HOME + "/.local/bin/rice-fonts", HOME + "/.local/bin/rice-desktop"
+    if os.path.exists(fonts):
+        subprocess.Popen(["bash", "-c", '"$1" >/dev/null 2>&1; "$2" restart >/dev/null 2>&1', "_", fonts, desk],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def ensure_shell():
+    try:
+        subprocess.Popen([HOME + "/.local/bin/rice-desktop", "ensure"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception:
+        pass
+
+
+def main(a):
+    if len(a) < 2:
+        die("usage: desktop-set state|widget ID on|off|pos ID X Y|geom ID X Y [SCALE] [W H]|wset ID KEY VAL|"
+            "reset-widget ID|edit on|off|toggle|clock KEY VAL|dock KEY VAL|lock KEY VAL|dock-blur|widgets-blur on|off|gamebar opacity N|blur on|off|widgets-theme shadow|google|outline|widgets-adapt on|off|auto-hide on|off|reset-pos")
+    cmd = a[1]
+    os.makedirs(DIR, exist_ok=True)
+    lk = open(LOCK, "w")
+    fcntl.flock(lk, fcntl.LOCK_EX)
+    c = load()
+    if cmd == "state":
+        if not os.path.exists(CFG):
+            save(c)
+        print(json.dumps(c))
+        return
+    if cmd == "widget":
+        if len(a) < 4 or a[2] not in WIDGETS:
+            die("widget: " + "|".join(WIDGETS) + " on|off")
+        c["widgets"][a[2]]["enabled"] = tobool(a[3])
+    elif cmd == "pos":
+        if len(a) < 5:
+            die("pos ID X Y")
+        tgt = c["clock"] if a[2] == "clock" else c["widgets"].get(a[2])
+        if tgt is None:
+            die("unknown id: " + a[2])
+        tgt["x"], tgt["y"] = max(0, int(float(a[3]))), max(0, int(float(a[4])))
+    elif cmd == "clock":
+        if len(a) < 4:
+            die("clock KEY VALUE")
+        k, v = a[2], a[3]
+        if k in ("enabled", "onlyLocked"):
+            c["clock"][k] = tobool(v)
+        elif k in CHOICES:
+            if v not in CHOICES[k]:
+                die("%s: %s" % (k, "|".join(CHOICES[k])))
+            c["clock"][k] = v
+        else:
+            die("unknown clock key: " + k)
+    elif cmd == "dock-apps":
+        # dock-apps '["kitty", "firefox"]'   the pinned apps, in order (Settings > Dock, the dock's app menu)
+        try:
+            l = json.loads(a[2]) if len(a) > 2 else None
+        except ValueError:
+            l = None
+        if not isinstance(l, list):
+            die("dock-apps JSON-LIST")
+        c["dock"]["apps"] = [str(x) for x in l if str(x).strip()][:24]
+    elif cmd in ("dock-pin", "dock-unpin"):
+        if len(a) < 3:
+            die(cmd + " APP-ID")
+        apps = [x for x in c["dock"].get("apps", []) if x != a[2]]
+        if cmd == "dock-pin":
+            apps.append(a[2])
+        c["dock"]["apps"] = apps[:24]
+    elif cmd in ("dock", "lock"):
+        if len(a) < 4 or a[2] not in c[cmd] or a[2] == "apps":
+            die("%s KEY on|off (keys: %s)" % (cmd, ", ".join(k for k in c[cmd] if k != "apps")))
+        if cmd == "dock" and a[2] == "position":
+            if a[3] not in ("bottom", "top", "left", "right"):
+                die("dock position: bottom|left|right")
+            c["dock"]["position"] = "bottom" if a[3] == "top" else a[3]   # the top belongs to the bar
+        elif cmd == "dock" and a[2] == "opacity":
+            c["dock"]["opacity"] = round(max(0.2, min(1.0, float(a[3]))), 2)
+        else:
+            c[cmd][a[2]] = tobool(a[3])
+    elif cmd == "gamebar":
+        # gamebar opacity 0.2-1 | gamebar blur on|off
+        if len(a) < 4 or a[2] not in ("opacity", "blur"):
+            die("gamebar opacity 0.2-1|blur on|off")
+        g = c.setdefault("gamebar", {"opacity": 0.9, "blur": True})
+        if a[2] == "opacity":
+            g["opacity"] = round(max(0.2, min(1.0, float(a[3]))), 2)
+        else:
+            g["blur"] = tobool(a[3])
+    elif cmd in ("lock-regen", "dock-blur"):
+        pass
+    elif cmd == "widgets-blur":
+        c["widgetBlur"] = tobool(a[2] if len(a) > 2 else "on")
+    elif cmd == "widgets-theme":
+        if len(a) < 3 or a[2] not in THEMES:
+            die("widgets-theme " + "|".join(THEMES))
+        c["widgetTheme"] = a[2]
+    elif cmd == "widgets-opacity":
+        # widgets-opacity 0.2-1: how strong the widget cards are (all of them)
+        c["widgetOpacity"] = round(max(0.2, min(1.0, float(a[2] if len(a) > 2 else 1))), 2)
+    elif cmd == "widgets-fps":
+        # widgets-fps 30|60|120|0: how smooth the moving parts of the widgets are (0 = as fast as your screen)
+        try:
+            v = int(float(a[2] if len(a) > 2 else 60))
+        except ValueError:
+            v = 60
+        c["fps"] = 0 if v <= 0 else max(20, min(240, v))
+    elif cmd == "widgets-adapt":
+        c["widgetAdapt"] = tobool(a[2] if len(a) > 2 else "on")
+    elif cmd == "auto-hide":
+        c["autoHide"] = tobool(a[2] if len(a) > 2 else "on")
+    elif cmd == "geom":
+        # geom ID X Y [SCALE] [W H]
+        if len(a) < 5:
+            die("geom ID X Y [SCALE] [W H]")
+        t = target(c, a[2])
+        for k, i in (("x", 3), ("y", 4), ("scale", 5), ("w", 6), ("h", 7)):
+            if len(a) > i and a[i] not in ("", "-"):
+                v = clean_geom(a[2], k, a[i])
+                if v is not None:
+                    t[k] = v
+        if a[2] == "clock":
+            c["clock"]["placement"] = "draggable"
+    elif cmd == "wset":
+        # wset ID KEY VALUE   (opacity, bg, style, flip, scale, w, h, x, y)
+        if len(a) < 5 or a[3] not in GEOM:
+            die("wset ID KEY VALUE   keys: " + " ".join(GEOM))
+        t = target(c, a[2])
+        v = clean_geom(a[2], a[3], a[4])
+        if v is None:
+            die("bad value for %s: %s" % (a[3], a[4]))
+        t[a[3]] = v
+    elif cmd == "reset-widget":
+        t = target(c, a[2] if len(a) > 2 else "")
+        for k in GEOM:
+            if k not in ("style", "color", "font", "focus", "metric", "bars", "shape", "gap", "gain"):
+                t.pop(k, None)
+    elif cmd == "edit":
+        v = a[2] if len(a) > 2 else "toggle"
+        c["editing"] = (not c.get("editing")) if v == "toggle" else tobool(v)
+    elif cmd == "reset-pos":
+        for w in WIDGETS:
+            for k in ("x", "y", "scale", "w", "h"):
+                c["widgets"][w].pop(k, None)
+        for k in ("x", "y", "scale", "w", "h"):
+            c["clock"].pop(k, None)
+    else:
+        die("unknown command: " + cmd)
+    save(c)
+    # a clock font that is not on this computer yet: download it, then start the widgets again (they read fonts at start)
+    if (cmd == "clock" and a[2] == "font") or (cmd == "wset" and a[2] == "clock" and a[3] == "font"):
+        font_wanted(c["clock"].get("font", "default"))
+    if cmd in ("lock", "lock-regen"):
+        lock_conf(c)
+    if cmd == "dock" and a[2] == "blur" or cmd in ("dock-blur", "widgets-blur") or (cmd == "gamebar" and a[2] == "blur"):
+        dock_blur(c)
+    elif cmd not in ("pos", "geom", "wset", "edit", "reset-widget", "widgets-theme", "widgets-adapt", "widgets-opacity", "widgets-fps", "dock-apps", "dock-pin", "dock-unpin", "gamebar"):
+        ensure_shell()
+    elif cmd == "edit" and c["editing"]:
+        ensure_shell()
+
+
+main(sys.argv)

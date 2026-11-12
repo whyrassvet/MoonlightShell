@@ -1,0 +1,725 @@
+#!/usr/bin/env python3
+import fcntl
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+DIR = HOME + "/.config/waybar"
+CFG = DIR + "/config.jsonc"
+CSS = DIR + "/style.css"
+UI = DIR + "/ui.json"
+LEGACY = DIR + "/bar-ui.css"
+LOCK = DIR + "/.ui.lock"
+FONTS = HOME + "/.config/rice/fonts.json"
+
+ZONES = ["left", "center", "right"]
+ZKEY = {"left": "modules-left", "center": "modules-center", "right": "modules-right"}
+
+# top-level modules the layout editor can place: name -> (default zone, css selector)
+REG = {
+    "image#nix": ("left", "#image.nix"),
+    "custom/distro": ("left", "#custom-distro"),
+    "group/ws": ("left", "#ws"),
+    "mpris": ("left", "#mpris"),
+    "wireplumber": ("right", "#wireplumber"),
+    "clock": ("right", "#clock"),
+    "group/apps": ("right", "#apps"),
+    "custom/notification": ("right", "#custom-notification"),
+    "custom/lock": ("right", "#custom-lock"),
+    "battery": ("right", "#battery"),
+}
+# modules the layout editor can add even when your config has no block for them yet
+DEFAULT_DEFS = {
+    "battery": {
+        "interval": 30,
+        "states": {"warning": 30, "critical": 15},
+        "format": "{icon} {capacity}%",
+        "format-charging": "\U000f0084 {capacity}%",
+        "format-plugged": "\U000f06a5 {capacity}%",
+        "format-full": "\U000f0079 {capacity}%",
+        "format-icons": ["\U000f007a", "\U000f007b", "\U000f007c", "\U000f007d", "\U000f007e",
+                         "\U000f007f", "\U000f0080", "\U000f0081", "\U000f0082", "\U000f0079"],
+        "tooltip-format": "{timeTo}  ·  {power:.1f} W",
+    },
+}
+SUBS = ["bluetooth", "tray", "network"]
+SUB_ORDER = ["bluetooth", "tray", "network"]
+SUB_SEL = ["#bluetooth", "#tray", "#network"]
+TOGGLES = ["mpris", "wireplumber", "custom/notification", "bluetooth", "tray", "network", "battery"]
+
+GEN = r"\n?/\* rice-ui \*/.*?/\* end-rice-ui \*/\n?"
+OLD_H = r"\n?/\* bar-height \*/.*?/\* end-bar-height \*/\n?"
+OLD_S = r"\n?/\* bar-style \*/.*?/\* end-bar-style \*/\n?"
+RGBA = r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([0-9.]+)\s*\)"
+
+
+def die(msg):
+    sys.stderr.write(msg + "\n")
+    sys.exit(1)
+
+
+def load():
+    s = open(CFG).read()
+    try:
+        return json.loads(s)
+    except ValueError:  # .jsonc with // or /* */ comments or trailing commas
+        out, i, n, q = [], 0, len(s), False
+        while i < n:
+            ch = s[i]
+            if q:
+                out.append(ch)
+                if ch == "\\" and i + 1 < n:
+                    out.append(s[i + 1]); i += 1
+                elif ch == '"':
+                    q = False
+            elif ch == '"':
+                q = True; out.append(ch)
+            elif s.startswith("//", i):
+                j = s.find("\n", i); i = n if j < 0 else j; continue
+            elif s.startswith("/*", i):
+                j = s.find("*/", i + 2); i = n if j < 0 else j + 2; continue
+            else:
+                out.append(ch)
+            i += 1
+        return json.loads(re.sub(r",(\s*[}\]])", r"\1", "".join(out)))
+
+
+def atomic(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
+def save(c):
+    click_sounds(c)
+    atomic(CFG, json.dumps(c, indent=2, ensure_ascii=False) + "\n")
+
+
+DISTRO_GLYPHS = {
+    "nixos": 0xF313, "arch": 0xF303, "archarm": 0xF303, "cachyos": 0xF385, "endeavouros": 0xF322,
+    "manjaro": 0xF312, "garuda": 0xF303, "ubuntu": 0xF31B, "fedora": 0xF30A, "nobara": 0xF380, "bazzite": 0xF30A, "ultramarine": 0xF30A, "debian": 0xF306,
+    "opensuse": 0xF314, "gentoo": 0xF30D, "void": 0xF32E, "alpine": 0xF300,
+}
+
+
+def distro_glyph():
+    ids = []
+    try:
+        for ln in open(os.environ.get("OS_RELEASE", "/etc/os-release")):
+            k, _, v = ln.strip().partition("=")
+            v = v.strip('"').strip("'").lower()
+            if k == "ID":
+                ids.insert(0, v)
+            elif k == "ID_LIKE":
+                ids += v.split()
+    except Exception:
+        pass
+    for i in ids:
+        if i in DISTRO_GLYPHS:
+            return chr(DISTRO_GLYPHS[i])
+    return chr(0xF17C)
+
+
+def _swap_everywhere(c, old, new):
+    """replace a module name in the zones and inside any group (drawer) lists"""
+    for z in ZONES:
+        lst = zone_list(c, z)
+        if old in lst:
+            lst[lst.index(old)] = new
+            set_zone(c, z, lst)
+    for k, v in c.items():
+        if k.startswith("group/") and isinstance(v, dict) and isinstance(v.get("modules"), list) and old in v["modules"]:
+            v["modules"][v["modules"].index(old)] = new
+
+
+def _placed(c, name):
+    if zone_of(c, name):
+        return True
+    return any(isinstance(v, dict) and isinstance(v.get("modules"), list) and name in v["modules"]
+               for k, v in c.items() if k.startswith("group/"))
+
+
+def distro_swap(c, on):
+    # replace the fixed NixOS logo image by a glyph that matches the running distro,
+    # keeping what the logo did when clicked (for example opening the app launcher)
+    if on:
+        _swap_everywhere(c, "image#nix", "custom/distro")
+        if _placed(c, "custom/distro"):
+            d = {"exec": "echo .", "interval": "once", "format": distro_glyph(), "tooltip": False}
+            old = c.get("image#nix") if isinstance(c.get("image#nix"), dict) else {}
+            for key in ("on-click", "on-click-right", "on-click-middle", "tooltip-format"):
+                if key in old:
+                    d[key] = old[key]
+            if "tooltip-format" in d:
+                d["tooltip"] = True
+            c["custom/distro"] = d
+    else:
+        if "image#nix" in c:
+            _swap_everywhere(c, "custom/distro", "image#nix")
+        if not _placed(c, "custom/distro"):
+            c.pop("custom/distro", None)
+
+
+BELL, BELL_NEW, BELL_OFF = chr(0xF0F3), chr(0xF116B), chr(0xF009B)
+
+
+def notif_icons(c):
+    """the bell: no red dot for new notifications any more, a white bell with a small badge instead
+    (Do Not Disturb stays grey). Only the colors this rice used to set are replaced."""
+    for k, v in c.items():
+        if not (k == "custom/notification" or k.startswith("custom/notification#")) or not isinstance(v, dict):
+            continue
+        icons = v.get("format-icons")
+        if not isinstance(icons, dict):
+            continue
+        for name, val in list(icons.items()):
+            if not isinstance(val, str) or ("#ff4d4d" not in val and val.strip() not in (BELL, "")):
+                continue
+            dnd = name.startswith("dnd")
+            new = name.endswith("-notification") or name == "notification"
+            glyph = BELL_OFF if dnd else (BELL_NEW if new else BELL)
+            icons[name] = '<span foreground="#666666">%s</span>' % glyph if dnd else glyph
+
+
+SFX_CLICK = "$HOME/.local/bin/rice-sfx play click >/dev/null 2>&1 & "
+# words Waybar understands itself (not commands): leave them alone
+WAYBAR_WORDS = {"activate", "minimize", "minimize-raise", "maximize", "fullscreen", "close", "mode", "tz_up",
+                "tz_down", "shift_up", "shift_down", "shift_reset"}
+
+
+def click_sounds(c):
+    """a soft click (Settings > Sfx & sounds) when you click something on the bar. rice-sfx itself
+    stays quiet while the sounds are off, so the commands stay the same either way."""
+    for k, v in c.items():
+        if not isinstance(v, dict):
+            continue
+        for key in ("on-click", "on-click-right", "on-click-middle"):
+            cmd = v.get(key)
+            if not isinstance(cmd, str) or not cmd.strip() or cmd.strip() in WAYBAR_WORDS:
+                continue
+            if cmd.startswith(SFX_CLICK):
+                continue
+            v[key] = SFX_CLICK + cmd
+
+
+def clamp(v, lo, hi):
+    return max(lo, min(hi, v))
+
+
+def zone_list(c, z):
+    v = c.get(ZKEY[z])
+    return v if isinstance(v, list) else []
+
+
+def set_zone(c, z, lst):
+    if lst:
+        c[ZKEY[z]] = lst
+    elif ZKEY[z] in c:
+        del c[ZKEY[z]]
+
+
+def zone_of(c, name):
+    for z in ZONES:
+        if name in zone_list(c, z):
+            return z
+    return None
+
+
+def has_def(c, name):
+    # plain modules such as clock/mpris may be configured without a block
+    return name in c or name in ("clock", "mpris", "wireplumber") or name in DEFAULT_DEFS
+
+
+def apps_list(c):
+    g = c.get("group/apps")
+    if isinstance(g, dict) and isinstance(g.get("modules"), list):
+        return g["modules"]
+    return None
+
+
+def toggle(name, on):
+    c = load()
+    if name in SUBS:
+        mods = apps_list(c)
+        if mods is None:
+            die("group/apps not found in config")
+        if on and name not in mods:
+            pos = 0
+            for prev in reversed(SUB_ORDER[:SUB_ORDER.index(name)]):
+                if prev in mods:
+                    pos = mods.index(prev) + 1
+                    break
+            mods.insert(pos, name)
+        elif (not on) and name in mods:
+            mods.remove(name)
+        save(c)
+        return
+    if name not in REG:
+        die("unknown module: " + name)
+    cur = zone_of(c, name)
+    if on and cur is None:
+        add(name, REG[name][0], c)
+    elif (not on) and cur is not None:
+        lst = zone_list(c, cur)
+        lst.remove(name)
+        set_zone(c, cur, lst)
+        save(c)
+
+
+def add(name, zone, c=None):
+    if zone not in ZONES:
+        die("unknown zone: " + zone)
+    if name not in REG:
+        die("unknown module: " + name)
+    own = c is None
+    if own:
+        c = load()
+    if not has_def(c, name):
+        die("module has no definition in config: " + name)
+    if name in DEFAULT_DEFS and name not in c:
+        c[name] = json.loads(json.dumps(DEFAULT_DEFS[name]))
+    cur = zone_of(c, name)
+    if cur is not None:
+        lst = zone_list(c, cur)
+        lst.remove(name)
+        set_zone(c, cur, lst)
+    lst = zone_list(c, zone)
+    lst.append(name)
+    set_zone(c, zone, lst)
+    save(c)
+
+
+def remove(zone, name):
+    if zone not in ZONES:
+        die("unknown zone: " + zone)
+    c = load()
+    lst = zone_list(c, zone)
+    if name in lst:
+        lst.remove(name)
+        set_zone(c, zone, lst)
+        save(c)
+
+
+def move(zone, name, direction):
+    if zone not in ZONES:
+        die("unknown zone: " + zone)
+    c = load()
+    lst = zone_list(c, zone)
+    if name not in lst:
+        return
+    i = lst.index(name)
+    j = i - 1 if direction == "left" else i + 1
+    if 0 <= j < len(lst):
+        lst[i], lst[j] = lst[j], lst[i]
+        set_zone(c, zone, lst)
+        save(c)
+
+
+def window_block(s):
+    m = re.search(r"window#waybar\s*\{[^}]*\}", s, flags=re.S)
+    return m.group(0) if m else ""
+
+
+def base_rgb(s):
+    m = re.search(r"background:\s*([^;]+);", window_block(s))
+    if m:
+        v = m.group(1).strip()
+        r = re.match(r"rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", v)
+        if r:
+            return tuple(int(x) for x in r.groups())
+        h = re.match(r"#([0-9a-fA-F]{6})", v)
+        if h:
+            x = h.group(1)
+            return tuple(int(x[i:i + 2], 16) for i in (0, 2, 4))
+    return (13, 13, 13)
+
+
+def guess_alpha(s):
+    if os.path.exists(LEGACY):
+        m = re.search(RGBA, open(LEGACY).read())
+        if m:
+            return float(m.group(4))
+    m = re.search(RGBA, window_block(s))
+    return float(m.group(4)) if m else 0.45
+
+
+def read_ui():
+    try:
+        u = json.load(open(UI))
+    except Exception:
+        u = {}
+    s = open(CSS).read()
+    if "alpha" not in u:
+        u["alpha"] = guess_alpha(s)
+    u["alpha"] = clamp(float(u["alpha"]), 0.1, 1.0)
+    u.setdefault("last", u["alpha"] if u["alpha"] < 0.99 else 0.45)
+    if u.get("style") not in ("flat", "floating", "islands", "island"):
+        u["style"] = "flat"
+    if u.get("position") not in ("top", "bottom"):
+        try:
+            p = load().get("position", "top")
+        except Exception:
+            p = "top"
+        u["position"] = p if p in ("top", "bottom") else "top"
+    if u.get("group") not in ("none", "pills", "segmented"):
+        u["group"] = None
+    u["autohide"] = u.get("autohide") is True
+    try:
+        u["island_width"] = int(clamp(float(u.get("island_width", 900)), 300, 3000))
+    except Exception:
+        u["island_width"] = 900
+    try:
+        u["spacing"] = None if u.get("spacing") is None else int(clamp(float(u["spacing"]), 0, 16))
+    except Exception:
+        u["spacing"] = None
+    if "height" not in u:
+        h = re.search(r"/\* bar-height \*/\s*[^{]*\{\s*padding-top:\s*(\d+)px", s)
+        u["height"] = int(h.group(1)) if h else None
+    return u
+
+
+def eff_group(u):
+    if u["group"]:
+        return u["group"]
+    return "pills" if u["style"] == "islands" else "none"
+
+
+def fonts_css():
+    try:
+        f = json.load(open(FONTS))
+    except Exception:
+        return None
+    fam = [x for x in (f.get("main"), f.get("icons")) if x]
+    if not fam:
+        return None
+    names = ", ".join('"%s"' % x.replace('"', "") for x in fam)
+    return "window#waybar, window#waybar * {\n    font-family: " + names + ";\n}"
+
+
+def block(u, rgb, c):
+    col = "rgba(%d, %d, %d, %.2f)" % (rgb[0], rgb[1], rgb[2], u["alpha"])
+    brd, gcol = "#2a2a2a", col
+    if u["style"] == "island":
+        # one dark-grey island; any module group is only a barely visible lift, no outlines
+        col = "rgba(22, 22, 22, %.2f)" % u["alpha"]
+        gcol = "rgba(255, 255, 255, 0.05)"
+        brd = "rgba(255, 255, 255, 0.06)"
+    mods = ", ".join(v[1] for v in REG.values())
+    out = ["/* rice-ui */"]
+    fc = fonts_css()
+    if fc:
+        out.append(fc)
+    st = u["style"]
+    if st == "islands":
+        out.append("window#waybar {\n    background: transparent;\n    margin: 4px 8px;\n}")
+    elif st == "island":
+        # the whole bar is ONE pill: fixed width (config "width"), centered by waybar
+        out.append("window#waybar {\n    background: " + col + ";\n    margin: 0;\n"
+                   "    border-radius: 16px;\n    border: 1px solid " + brd + ";\n}")
+    elif st == "floating":
+        out.append("window#waybar {\n    background: " + col + ";\n    margin: 6px 10px;\n"
+                   "    border-radius: 12px;\n    border: 1px solid #2a2a2a;\n}")
+    else:
+        out.append("window#waybar {\n    background: " + col + ";\n}")
+    g = eff_group(u)
+    explicit = u["group"] is not None or st in ("islands", "island")
+    if g == "pills" and explicit:
+        out.append(mods + " {\n    background: " + gcol + ";\n    border: 1px solid " + ("transparent" if u["style"] == "island" else brd) + ";\n"
+                   "    border-radius: 10px;\n    margin: 0 3px;\n}")
+    elif g == "segmented" and explicit:
+        zs = [z for z in ZONES if zone_list(c, z)]
+        out.append(mods + " {\n    background: transparent;\n    border: none;\n"
+                   "    border-radius: 0;\n    margin: 0;\n}")
+        if zs:
+            sel = ", ".join("window#waybar .modules-" + z for z in zs)
+            out.append(sel + " {\n    background: " + gcol + ";\n    border: 1px solid " + ("transparent" if u["style"] == "island" else brd) + ";\n"
+                       "    border-radius: 12px;\n    margin: 0 3px;\n    padding: 0 4px;\n}")
+    elif g == "none" and explicit:
+        out.append(mods + " {\n    background: transparent;\n    border: none;\n"
+                   "    border-radius: 0;\n    margin: 0 3px;\n}")
+    h = u.get("height")
+    if h is not None:
+        sel = ", ".join([v[1] for v in REG.values()] + SUB_SEL)
+        out.append(sel + " {\n    padding-top: %dpx;\n    padding-bottom: %dpx;\n"
+                   "    margin-top: 0;\n    margin-bottom: 0;\n    min-height: 0;\n}" % (h, h))
+    out.append("tooltip {\n    background: rgba(18, 18, 18, 0.45);\n    border: 1px solid rgba(255, 255, 255, 0.12);\n"
+               "    border-radius: 12px;\n}\n\ntooltip label {\n    color: #F6F5F4;\n    padding: 2px 6px;\n}")
+    sp = u.get("spacing")
+    if isinstance(sp, int):
+        # gap between the modules on the right (volume, clock, system icons, notifications, power)
+        right = ["#wireplumber", "#clock", "#apps", "#battery", "#custom-notification", "#custom-lock"]
+        out.append(", ".join("window#waybar " + x for x in right) +
+                   " {\n    margin-left: %dpx;\n    margin-right: %dpx;\n}" % (sp, sp))
+        out.append(", ".join("window#waybar " + x for x in SUB_SEL) +
+                   " {\n    margin-left: %dpx;\n    margin-right: %dpx;\n}" % (max(0, sp // 2), max(0, sp // 2)))
+    if zone_of(c, "battery"):
+        out.append("window#waybar #battery {\n    padding-left: 10px;\n    padding-right: 10px;\n}\n\n"
+                   "window#waybar #battery.warning:not(.charging) {\n    color: #e5b567;\n}\n\n"
+                   "window#waybar #battery.critical:not(.charging) {\n    color: #e06c75;\n}")
+    if u.get("distro_icon") is True:
+        out.append("#custom-distro {\n    font-size: 16px;\n    padding: 0 8px;\n}")
+    ps = u.get("power_size", 0)
+    if isinstance(ps, int) and ps > 0:
+        out.append("window#waybar #custom-lock {\n    font-size: %dpx;\n}" % ps)
+    pn = u.get("power_nudge", 0)
+    if isinstance(pn, int) and pn > 0:
+        out.append("window#waybar #custom-lock {\n    margin-right: %dpx;\n}" % pn)
+    out.append("/* end-rice-ui */")
+    return "\n" + "\n\n".join(out) + "\n"
+
+
+def flat():
+    """rice-effects: blur and transparency are off right now (Lite, or gaming mode)"""
+    return os.path.exists(os.path.expanduser("~/.cache/rice/flat"))
+
+
+def apply(u):
+    for f in (CSS, CFG):
+        if not os.path.exists(f + ".bak-ui"):
+            shutil.copy(f, f + ".bak-ui")
+    s = open(CSS).read()
+    s = re.sub(GEN, "\n", s, flags=re.S)
+    s = re.sub(OLD_H, "\n", s, flags=re.S)
+    s = re.sub(OLD_S, "\n", s, flags=re.S)
+    s = s.replace('@import "bar-ui.css";\n', "")
+    r = dict(u, alpha=1.0) if flat() else u     # solid while blur and transparency are off
+    s = s.replace("@bar_bg", "rgba(13, 13, 13, %.2f)" % r["alpha"])
+    c = load()
+    atomic(CSS, s.rstrip() + "\n" + block(r, base_rgb(s), c))
+    if os.path.exists(LEGACY):
+        os.remove(LEGACY)
+    c["position"] = u["position"]
+    distro_swap(c, u.get("distro_icon") is True)
+    notif_icons(c)
+    # no calendar popup on the clock (survives preset switches because apply() runs after them)
+    for k in [k for k in c if k == "clock" or k.startswith("clock#")]:
+        if isinstance(c[k], dict):
+            c[k]["tooltip"] = False
+            c[k].pop("tooltip-format", None)
+            c[k].setdefault("on-click", "$HOME/.local/bin/rice-calendar")
+    # one-island style: fixed width + gap to the screen edge; remove only what we set
+    if u["style"] == "island":
+        mk = "margin-top" if u["position"] == "top" else "margin-bottom"
+        for k in ("margin-top", "margin-bottom"):
+            if k != mk and u.get("island_applied"):
+                c.pop(k, None)
+        c["width"] = u["island_width"]
+        c[mk] = 6
+        u["island_applied"] = True
+        atomic(UI, json.dumps(u))
+    elif u.get("island_applied"):
+        for k in ("width", "margin-top", "margin-bottom"):
+            c.pop(k, None)
+        u["island_applied"] = False
+        atomic(UI, json.dumps(u))
+    # hidden bar releases its exclusive zone, so windows grow; showing it shrinks them again
+    if u["autohide"]:
+        c["start_hidden"] = True
+    else:
+        c.pop("start_hidden", None)
+    if c.get("exclusive") is False:
+        c.pop("exclusive")
+    save(c)
+
+
+def ui_update(**kw):
+    u = read_ui()
+    u.update(kw)
+    u["alpha"] = clamp(float(u["alpha"]), 0.1, 1.0)
+    if u["alpha"] < 0.99:
+        u["last"] = u["alpha"]
+    atomic(UI, json.dumps(u))
+    apply(u)
+
+
+def layout_set(raw):
+    """whole layout at once (drag and drop in Settings > Bar layout): {"left": [...], "center": [...], "right": [...]}"""
+    try:
+        want = json.loads(raw)
+    except ValueError:
+        die("layout-set: bad JSON")
+    c = load()
+    seen = set()
+    new = {}
+    for z in ZONES:
+        lst = []
+        for m in want.get(z, []) if isinstance(want.get(z), list) else []:
+            m = str(m)
+            if m in seen:
+                continue
+            # modules we do not manage (your own custom ones) are kept where you put them
+            if m in REG and not has_def(c, m):
+                continue
+            if m not in REG and m not in c and not any(m in zone_list(c, z) for z in ZONES):
+                continue  # unknown name
+            if m in DEFAULT_DEFS and m not in c:
+                c[m] = json.loads(json.dumps(DEFAULT_DEFS[m]))
+            seen.add(m)
+            lst.append(m)
+        new[z] = lst
+    # anything that was on the bar but is not one of ours and was not mentioned: keep it
+    for z in ZONES:
+        for m in zone_list(c, z):
+            if m not in REG and m not in seen:
+                new[z].append(m)
+                seen.add(m)
+    for z in ZONES:
+        set_zone(c, z, new[z])
+    save(c)
+
+
+def apps_set(raw):
+    """icons inside "System icons" (group/apps), in this order; the ones left out are hidden"""
+    c = load()
+    mods = apps_list(c)
+    if mods is None:
+        die("group/apps not found in config")
+    want = [m for m in raw.split(",") if m in SUBS]
+    keep = [m for m in mods if m not in SUBS]          # your own extra icons stay at the end
+    out = []
+    for m in want + keep:
+        if m not in out:
+            out.append(m)
+    c["group/apps"]["modules"] = out
+    save(c)
+
+
+def regen():
+    # layout changes alter which zones exist; refresh the css block if we own one
+    if os.path.exists(UI):
+        apply(read_ui())
+
+
+def state():
+    c = load()
+    u = read_ui()
+    out = {
+        "opacity": u["alpha"],
+        "transparent": u["alpha"] < 0.99,
+        "style": u["style"],
+        "island_width": u["island_width"],
+        "position": u["position"],
+        "group": eff_group(u),
+        "autohide": u["autohide"],
+        "height": u["height"] if u["height"] is not None else 4,
+        "spacing": u["spacing"] if u["spacing"] is not None else 3,
+    }
+    lay = {}
+    placed = set()
+    for z in ZONES:
+        lay[z] = [m for m in zone_list(c, z)]
+        placed.update(lay[z])
+    lay["available"] = [m for m in REG if m not in placed and has_def(c, m)
+                        and not (u.get("distro_icon") is True and m == "image#nix")]
+    out["layout"] = lay
+    out["apps"] = list(apps_list(c) or [])
+    for m in TOGGLES:
+        if m in SUBS:
+            ml = apps_list(c)
+            out[m] = bool(ml and m in ml)
+        else:
+            out[m] = m in placed
+    print(json.dumps(out))
+
+
+USAGE = ("usage: waybar-set state|reapply|opacity V|transparency on|off|position top|bottom|"
+         "autohide on|off|style flat|floating|islands|island|island-width N|distro-icon on|off|power-nudge N|spacing N|power-size N|group none|pills|segmented|height V|"
+         "layout-add ZONE MODULE|layout-remove ZONE MODULE|layout-move ZONE MODULE left|right|layout-set JSON|apps-set a,b,c|"
+         "toggle MODULE on|off")
+
+
+def arg(argv, n):
+    if len(argv) <= n:
+        die(USAGE)
+    return argv[n]
+
+
+def main(argv):
+    if len(argv) < 2:
+        die(USAGE)
+    cmd = argv[1]
+    if cmd == "state":
+        state()
+        return
+    os.makedirs(DIR, exist_ok=True)
+    lk = open(LOCK, "w")
+    fcntl.flock(lk, fcntl.LOCK_EX)
+    if cmd == "reapply":
+        if os.path.exists(UI):
+            apply(read_ui())
+    elif cmd == "autohide":
+        on = arg(argv, 2) == "on"
+        ui_update(autohide=on)
+        try:
+            subprocess.Popen([HOME + "/.local/bin/waybar-autohide", "start" if on else "stop"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        except Exception:
+            pass
+    elif cmd == "fonts-apply":
+        ui_update()
+    elif cmd == "opacity":
+        ui_update(alpha=float(arg(argv, 2)))
+    elif cmd == "transparency":
+        if arg(argv, 2) == "on":
+            ui_update(alpha=read_ui().get("last", 0.45))
+        else:
+            ui_update(alpha=1.0)
+    elif cmd == "position":
+        v = arg(argv, 2)
+        if v not in ("top", "bottom"):
+            die("position: top|bottom")
+        ui_update(position=v)
+    elif cmd == "distro-icon":
+        ui_update(distro_icon=(arg(argv, 2) == "on"))
+    elif cmd == "power-size":
+        ui_update(power_size=int(clamp(float(arg(argv, 2)), 0, 48)))
+    elif cmd == "power-nudge":
+        ui_update(power_nudge=int(clamp(float(arg(argv, 2)), 0, 80)))
+    elif cmd == "island-width":
+        ui_update(island_width=int(arg(argv, 2)))
+    elif cmd == "style":
+        v = arg(argv, 2)
+        if v not in ("flat", "floating", "islands", "island"):
+            die("style: flat|floating|islands|island")
+        if v == "islands" and read_ui()["group"] in (None, "none"):
+            ui_update(style=v, group="pills")
+        elif v == "island":
+            ui_update(style=v, group="none")
+        else:
+            ui_update(style=v)
+    elif cmd == "group":
+        v = arg(argv, 2)
+        if v not in ("none", "pills", "segmented"):
+            die("group: none|pills|segmented")
+        ui_update(group=v)
+    elif cmd == "spacing":
+        ui_update(spacing=int(clamp(float(arg(argv, 2)), 0, 16)))
+    elif cmd == "height":
+        ui_update(height=int(clamp(float(arg(argv, 2)), 0, 20)))
+    elif cmd == "toggle":
+        toggle(arg(argv, 2), arg(argv, 3) == "on")
+        regen()
+    elif cmd == "layout-add":
+        add(arg(argv, 3), arg(argv, 2))
+        regen()
+    elif cmd == "layout-remove":
+        remove(arg(argv, 2), arg(argv, 3))
+        regen()
+    elif cmd == "layout-move":
+        move(arg(argv, 2), arg(argv, 3), arg(argv, 4))
+    elif cmd == "layout-set":
+        layout_set(arg(argv, 2))
+        regen()
+    elif cmd == "apps-set":
+        apps_set(arg(argv, 2) if len(argv) > 2 else "")
+        regen()
+    else:
+        die("unknown command: " + cmd)
+
+
+main(sys.argv)

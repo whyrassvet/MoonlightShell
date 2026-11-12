@@ -1,0 +1,191 @@
+{
+  "$schema": "/etc/xdg/swaync/configSchema.json",
+  "positionX": "right",
+  "positionY": "top",
+  "layer": "overlay",
+  "control-center-layer": "top",
+  "layer-shell": true,
+  "cssPriority": "user",
+  "control-center-margin-top": 10,
+  "control-center-margin-bottom": 10,
+  "control-center-margin-right": 10,
+  "control-center-margin-left": 10,
+  "notification-2fa-action": true,
+  "notification-inline-replies": false,
+  "notification-icon-size": 42,
+  "notification-body-image-height": 100,
+  "notification-body-image-width": 100,
+  "notification-window-width": 360,
+  "timeout": 6,
+  "timeout-low": 3,
+  "timeout-critical": 0,
+  "fit-to-screen": true,
+  "control-center-width": 440,
+  "control-center-height": 780,
+  "keyboard-shortcuts": true,
+  "image-visibility": "when-available",
+  "transition-time": 200,
+  "hide-on-clear": false,
+  "hide-on-action": true,
+  "script-fail-notify": false,
+  "widgets": [
+    "buttons-grid#quick",
+    "title",
+    "notifications",
+    "mpris",
+    "volume",
+    "buttons-grid#session"
+  ],
+  "widget-config": {
+    "title": {
+      "text": "Notifications",
+      "clear-all-button": true,
+      "button-text": "󰩺  Clear"
+    },
+    "backlight": {
+      "label": "󰃟"
+    },
+    "dnd": {
+      "text": "Do Not Disturb"
+    },
+    "label": {
+      "max-lines": 1,
+      "text": "Notification"
+    },
+    "mpris": {
+      "image-size": 52,
+      "image-radius": 12
+    },
+    "buttons-grid": {
+      "actions": [
+        {
+          "label": "󰐥",
+          "command": "$HOME/.local/bin/rice-sys poweroff"
+        },
+        {
+          "label": "󰌾",
+          "command": "hyprlock"
+        },
+        {
+          "label": "󰍃",
+          "command": "@HOME@/.local/bin/logout"
+        },
+        {
+          "label": "󰕾",
+          "command": "pactl set-sink-mute @DEFAULT_SINK@ toggle",
+          "type": "toggle",
+          "active": false,
+          "update_command": "@HOME@/.local/bin/mute-state"
+        },
+        {
+          "label": "󰒓",
+          "command": "swaync-client -cp; ~/.local/bin/rice-settings"
+        }
+      ]
+    },
+    "volume": {
+      "label": "󰕾",
+      "show-per-app": false
+    },
+    "buttons-grid#quick": {
+      "buttons-per-row": 5,
+      "actions": [
+        {
+          "label": "󰖩",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle wifi",
+          "update-command": "@HOME@/.local/bin/rice-services is wifi"
+        },
+        {
+          "label": "󰂯",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle bluetooth",
+          "update-command": "@HOME@/.local/bin/rice-services is bluetooth"
+        },
+        {
+          "label": "󰂛",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle dnd",
+          "update-command": "@HOME@/.local/bin/rice-services is dnd"
+        },
+        {
+          "label": "󰅶",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle awake",
+          "update-command": "@HOME@/.local/bin/rice-services is awake"
+        },
+        {
+          "label": "󰍬",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle mic",
+          "update-command": "@HOME@/.local/bin/rice-services is mic"
+        }
+      ]
+    },
+    "buttons-grid#power": {
+      "buttons-per-row": 3,
+      "actions": [
+        {
+          "label": "󰌪  Saver",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle profile:power-saver",
+          "update-command": "@HOME@/.local/bin/rice-services is profile:power-saver"
+        },
+        {
+          "label": "󰗑  Balanced",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle profile:balanced",
+          "update-command": "@HOME@/.local/bin/rice-services is profile:balanced"
+        },
+        {
+          "label": "󰓅  Performance",
+          "type": "toggle",
+          "active": false,
+          "command": "@HOME@/.local/bin/rice-services toggle profile:performance",
+          "update-command": "@HOME@/.local/bin/rice-services is profile:performance"
+        }
+      ]
+    },
+    "buttons-grid#session": {
+      "buttons-per-row": 5,
+      "actions": [
+        {
+          "label": "󰌾",
+          "command": "@HOME@/.local/bin/rice-services session lock"
+        },
+        {
+          "label": "󰒲",
+          "command": "@HOME@/.local/bin/rice-services session suspend"
+        },
+        {
+          "label": "󰍃",
+          "command": "@HOME@/.local/bin/rice-services session logout"
+        },
+        {
+          "label": "󰜉",
+          "command": "@HOME@/.local/bin/rice-services session reboot"
+        },
+        {
+          "label": "󰐥",
+          "command": "@HOME@/.local/bin/rice-services session poweroff"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "rice-sound": {
+      "exec": "@HOME@/.local/bin/rice-sound notify",
+      "app-name": ".*",
+      "run-on": "receive"
+    }
+  },
+  "control-center-positionX": "right",
+  "control-center-positionY": "top"
+}

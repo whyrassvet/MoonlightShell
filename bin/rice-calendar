@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Click on the clock: open the calendar (a second click just brings it to the front).
+for app in gnome-calendar kalendar merkuro-calendar; do
+  command -v "$app" >/dev/null 2>&1 && { setsid -f "$app" >/dev/null 2>&1; exit 0; }
+done
+notify-send -a "DarkShadow's Shell" -i x-office-calendar "No calendar app" "Install gnome-calendar to open it from the clock" 2>/dev/null
