@@ -159,7 +159,7 @@ PanelWindow {
     mask: Region { item: !bar.on ? hitNone : (bar.shownBar ? hitBar : hitStrip); Region { item: hitRec } Region { item: hitIsl } Region { item: hitMenu } Region { item: hitPop } }
     Item { id: hitMenu; x: bar.gap + trayMenu.x; y: body.y + trayMenu.y; width: trayMenu.visible ? trayMenu.width : 0; height: trayMenu.height }
     Item { id: hitPop; x: bar.gap + barPop.x; y: body.y + barPop.y; width: barPop.visible ? barPop.width : 0; height: barPop.height }
-    // a card of the island or the tray menu is open: Esc, a click on the desktop (shell.qml) or another window closes it
+    // An open card closes with Esc or a click outside (caught by shell.qml).
     readonly property bool sticky: isl.sticky || trayMenu.open || barPop.open
     function closeCards() { isl.closeCards(); trayMenu.close(); barPop.close() }
     onStickyChanged: if (sticky) keyCatch.forceActiveFocus()
@@ -204,7 +204,7 @@ PanelWindow {
         enabled: bar.hideOn
         onHoveredChanged: { if (hovered) { leaveT.stop(); bar.peek = true } else leaveT.restart() }
     }
-    WlrLayershell.layer: WlrLayer.Top
+    WlrLayershell.layer: sticky ? WlrLayer.Overlay : WlrLayer.Top
     WlrLayershell.namespace: "rice-bar"
 
     // ---------- screen recording (rice-hotcorner record): the island under the bar ----------

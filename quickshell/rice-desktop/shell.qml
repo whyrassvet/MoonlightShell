@@ -575,14 +575,14 @@ ShellRoot {
     Bar { id: mainBar; nf: notifs }
     // the bar on the left or right edge (Settings > DarkShadow bar > Position)
     VBar { }
-    // a click on the desktop closes the bar's open card or tray menu (it lies under the windows, over the wallpaper)
+    // Catch clicks outside an open bar card, including clicks over application windows.
     PanelWindow {
         screen: Mon.screen
         visible: mainBar.sticky
         color: "transparent"
         anchors { top: true; bottom: true; left: true; right: true }
         exclusionMode: ExclusionMode.Ignore
-        WlrLayershell.layer: WlrLayer.Bottom
+        WlrLayershell.layer: WlrLayer.Top
         WlrLayershell.namespace: "rice-island-catch"
         MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onPressed: mainBar.closeCards() }
     }
