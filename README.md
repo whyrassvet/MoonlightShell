@@ -3,8 +3,11 @@
 </p>
 
 <p align="center">
-  <b>A desktop that feels like yours.</b><br>
-  A customizable Quickshell desktop for Hyprland and niri.<br>
+  <b>🌙 A desktop that feels like yours. ✨</b><br>
+  A customizable Quickshell desktop for Hyprland and niri.
+</p>
+
+<p align="center">
   Made by <a href="https://github.com/whyrassvet">rassvet</a>
 </p>
 
@@ -27,7 +30,7 @@
 
 ---
 
-## Screenshots
+## 🌌 Screenshots
 
 <p align="center">
   <img src="assets/screenshot-desktop.png" alt="Moonlight Shell desktop with widgets, bar and visualizer" width="100%"><br>
@@ -42,7 +45,7 @@
   <sub>Edit mode · <code>SUPER + ALT + W</code></sub>
 </p>
 
-## <img src="assets/readme-rocket.svg" alt="" width="20"> Install
+## 🚀 Install
 
 Moonlight Shell supports **Arch-based distributions**, including Arch Linux, CachyOS and EndeavourOS. The installer supports Hyprland and niri; Hyprland requires version **0.55 or newer**.
 
@@ -60,7 +63,7 @@ Choose Hyprland, niri or both in the installer. To preview the plan without inst
 
 The installer saves replaced files in `~/.config/darkshadows-shell-backup-<timestamp>/`. See `./install.sh --help` for options, including `--no-packages`, `--wm=niri` and `--restore`.
 
-## <img src="assets/readme-settings.svg" alt="" width="20"> Make it yours
+## 🎨 Make it yours
 
 Use the Settings app to personalize the bar, wallpaper, colors, animations and desktop widgets. Edit mode lets you arrange widgets and adjust the visualizer directly on the desktop.
 
@@ -72,11 +75,11 @@ Use the Settings app to personalize the bar, wallpaper, colors, animations and d
 | `SUPER + N` | Open the control center |
 | `Print` | Capture the focused monitor |
 
-### Your Hyprland configuration
+### ⚙️ Your Hyprland configuration
 
 For your own Hyprland Lua settings and keybinds, edit `~/.config/hypr/user.lua`. It is loaded last by the shell's Hyprland configuration and is not overwritten by the installer during updates. Settings controlled by the app are kept separately.
 
-## <img src="assets/readme-gears.svg" alt="" width="20"> Updates
+## 🔄 Updates
 
 Check **Settings → Update Center** or run the installer from your Moonlight Shell checkout:
 
@@ -86,10 +89,8 @@ Check **Settings → Update Center** or run the installer from your Moonlight Sh
 
 Updates use the [Moonlight Shell repository](https://github.com/whyrassvet/MoonlightShell). If Git cannot fast-forward, the update stops rather than resetting or stashing your local changes. Browse published versions on the [releases page](https://github.com/whyrassvet/MoonlightShell/releases).
 
-## Credits
+## 💙 Credits
 
 Moonlight Shell is based on [DarkShadowShell](https://github.com/shadowww-dev/DarkShadowShell) by shadowww-dev, with bug fixes and quality-of-life improvements developed for this fork. Thanks to the original author and everyone whose work contributed to the project.
-
-Readme icons are derived from Font Awesome glyphs in [Nerd Fonts](https://www.nerdfonts.com/); see the [Font Awesome license](https://fontawesome.com/license/free).
 
 Licensed under the [MIT License](LICENSE).
