@@ -182,7 +182,7 @@ The installer asks which window manager you want (Hyprland, niri or both), insta
 | `SUPER + F12` / `F11` / `F10` | volume up / down / mute (with on-screen display) |
 | media keys | play/pause, next, previous |
 | `Fn` volume / brightness keys, headset `+` `-` | volume, mute, microphone, brightness |
-| `Print` / `SHIFT + Print` | screenshot of a region / the whole screen |
+| `Print` / `SHIFT + Print` | screenshot of the focused screen (saved and copied) / all screens |
 | `SUPER + SHIFT + R` | record a region (press again to stop) |
 | `SUPER + A` | control center (quick switches) |
 | `SUPER + G` | game bar |

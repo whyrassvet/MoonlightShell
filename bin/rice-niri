@@ -230,7 +230,7 @@ def default_binds(f, term, files):
         ("Mod+Alt+W", 'hotkey-overlay-title="Edit the desktop widgets"', run(b + "desktop-set", "edit", "toggle")),
         ("Mod+Alt+D", 'hotkey-overlay-title=null', run(b + "rice-dashboard", "open")),
         # screenshots and recording (niri's own screenshot tool is on Ctrl and Alt)
-        ("Print", 'hotkey-overlay-title="Screenshot of an area"', run(b + "rice-hotcorner", "shot", "region")),
+        ("Print", 'hotkey-overlay-title="Screenshot of the focused screen"', run(b + "rice-hotcorner", "shot", "focused")),
         ("Shift+Print", 'hotkey-overlay-title="Screenshot of the screen"', run(b + "rice-hotcorner", "shot", "full")),
         ("Mod+Shift+S", 'hotkey-overlay-title=null', run(b + "screenshot")),
         ("Ctrl+Print", "", "screenshot-screen;"),

@@ -26,7 +26,7 @@ RK.actions = {
     close     = { "SUPER + Q",         function() return hl.dsp.window.close() end },
     float     = { "SUPER + SHIFT + V", function() return hl.dsp.window.float({ action = "toggle" }) end },
     clipboard = { "SUPER + V",         exec(BIN .. "rice-clip toggle") },
-    shot      = { "Print",             exec(BIN .. "rice-hotcorner shot region") },
+    shot      = { "Print",             exec(BIN .. "rice-hotcorner shot focused") },
     shotfull  = { "SHIFT + Print",     exec(BIN .. "rice-hotcorner shot full") },
     record    = { "SUPER + SHIFT + R", exec(BIN .. "rice-hotcorner record region") },
     widgets   = { "SUPER + ALT + W",   exec(BIN .. "desktop-set edit toggle") },

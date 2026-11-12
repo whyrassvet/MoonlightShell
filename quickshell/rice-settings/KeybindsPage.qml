@@ -56,7 +56,7 @@ Item {
             ["Super + Tab", "Task view: every workspace and its windows", "taskview"], ["Alt + Tab", "Switch windows (hold Alt, Tab on, let go)", "switcher"],
             ["Super + O", "niri's own overview"], ["Super + Shift + Arrows", "Focus another screen"] ] },
         { name: "Screenshots and recording", sym: "screenshot_monitor", keys: [
-            ["Print", "Screenshot of an area", "shot"], ["Shift + Print", "Screenshot of the whole screen", "shotfull"],
+            ["Print", "Screenshot of the focused screen", "shot"], ["Shift + Print", "Screenshot of the whole screen", "shotfull"],
             ["Alt + Print", "Screenshot of the window"], ["Super + Shift + R", "Record the screen (again: stop)", "record"] ] },
         { name: "Sound, brightness, music", sym: "volume_up", keys: [
             ["Volume keys", "Louder, quieter, mute"], ["Super + F12 / F11 / F10", "Louder / quieter / mute"],
@@ -85,7 +85,7 @@ Item {
             ["Super + 1 … 0", "Go to workspace 1 … 10"], ["Super + Shift + 1 … 0", "Move the window to a workspace"],
             ["Super + Mouse wheel", "Next / previous workspace"], ["Super + S", "The hidden scratch workspace"] ] },
         { name: "Screenshots and recording", sym: "screenshot_monitor", keys: [
-            ["Print", "Screenshot of an area", "shot"], ["Shift + Print", "Screenshot of the whole screen", "shotfull"],
+            ["Print", "Screenshot of the focused screen", "shot"], ["Shift + Print", "Screenshot of the whole screen", "shotfull"],
             ["Super + Shift + S", "Screenshot of an area"], ["Super + Shift + R", "Record the screen (again: stop)", "record"] ] },
         { name: "Sound, brightness, music", sym: "volume_up", keys: [
             ["Volume keys", "Louder, quieter, mute"], ["Super + F12 / F11 / F10", "Louder / quieter / mute"],
