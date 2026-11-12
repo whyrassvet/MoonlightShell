@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rice-update: updates for DarkShadow's Shell.
+"""rice-update: updates for Moonlight Shell.
 
   rice-update               install the newest version (runs ./install.sh --update in the repo)
   rice-update check [--json] [--offline]
@@ -45,24 +45,23 @@ def repo():
 
 
 def key(v):
-    """'2.02' < '2.1' == '2.10' < '3.0' (the part after the dot reads like decimals)"""
+    """Compare numeric version components, e.g. 1.9 < 1.10."""
     try:
-        major, _, minor = v.strip().lstrip("vV").partition(".")
-        return (int(major), float("0." + (minor or "0")))
+        return tuple(int(part) for part in v.strip().lstrip("vV").split("."))
     except ValueError:
-        return (0, 0.0)
+        return (0,)
 
 
 def clean(v):
     v = (v or "").strip().lstrip("vV")
-    return v if v and key(v) > (0, 0.0) else ""
+    return v if v and key(v) > (0,) else ""
 
 
 def installed():
     try:
-        return clean(open(INSTALLED).read()) or "2.01"
+        return clean(open(INSTALLED).read()) or "0"
     except OSError:
-        return "2.01"   # installs from before versions existed
+        return "0"
 
 
 def git(r, *a, timeout=25):
@@ -96,15 +95,15 @@ def latest(offline=False):
     latest.ahead, latest.sha, latest.log = 0, "", ""
     if r and os.path.isdir(r + "/.git") and shutil.which("git"):
         try:
+            remote = git(r, "remote", "get-url", "origin", timeout=5)
+            url = remote.stdout.strip().removesuffix(".git")
+            if remote.returncode or url not in ("https://github.com/whyrassvet/MoonlightShell", "git@github.com:whyrassvet/MoonlightShell"):
+                raise ValueError("origin is not the Moonlight Shell GitHub repository")
             if not offline:
-                f = git(r, "fetch", "--quiet")
+                f = git(r, "fetch", "--quiet", "origin", "main")
                 if f.returncode != 0:
                     err = (f.stderr.strip().splitlines() or ["git fetch failed"])[-1]
-            refs = []
-            u = git(r, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", timeout=5)
-            if u.returncode == 0 and u.stdout.strip():
-                refs.append(u.stdout.strip())
-            refs += ["origin/main", "origin/master"]
+            refs = ["origin/main"]
             for ref in refs:
                 s = git(r, "show", ref + ":VERSION", timeout=5)
                 if s.returncode == 0 and clean(s.stdout):
@@ -148,7 +147,7 @@ def check(offline=False):
     out = {"installed": have, "latest": new or have, "update": newer or ahead > 0,
            "changes": ahead, "commit": getattr(latest, "sha", ""),
            "news": news(getattr(latest, "log", ""), new or have)[:4],
-           "checked": int(time.time()), "error": err if not new else ""}
+            "checked": int(time.time()), "error": err}
     os.makedirs(CACHE, exist_ok=True)
     try:
         json.dump(out, open(STATE, "w"))
@@ -210,7 +209,7 @@ def gui(args):
     r = repo()
     os.makedirs(CACHE, exist_ok=True)
     if not r:
-        open(LIVE_LOG, "w").write("    \u2718 Could not find your copy of the repo (~/shadows-shell). Clone it again:\n"
+        open(LIVE_LOG, "w").write("    \u2718 Could not find your copy of the repo (~/moonlight-shell). Clone it again:\n"
                                   "      git clone https://github.com/whyrassvet/MoonlightShell ~/moonlight-shell\n")
         put_live(state="failed", code=1, started=int(time.time()), ended=int(time.time()), pid=0)
         return 1

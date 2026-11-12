@@ -11,13 +11,11 @@ if [ -r "$OS_RELEASE" ]; then
 fi
 FAMILY=other
 case " $DISTRO_ID $DISTRO_LIKE " in
-  *" nixos "*) FAMILY=nixos ;;
   *" arch "*|*" archlinux "*|*" cachyos "*|*" endeavouros "*|*" manjaro "*|*" garuda "*) FAMILY=arch ;;
-  *" fedora "*|*" nobara "*|*" ultramarine "*) FAMILY=fedora ;;
 esac
 # the flavour inside a family, for messages (CachyOS, EndeavourOS, Manjaro, Nobara, Bazzite ...)
 DISTRO_FLAVOR="$DISTRO_ID"
-case "$FAMILY" in arch|fedora) : ;; *) DISTRO_FLAVOR="$FAMILY" ;; esac
+case "$FAMILY" in arch) : ;; *) DISTRO_FLAVOR="$FAMILY" ;; esac
 # the Hyprland config is Lua, which needs Hyprland 0.55 or newer
 HYPR_MIN_MAJOR=0; HYPR_MIN_MINOR=55
 # Fedora Atomic (Bazzite, Silverblue, Kinoite...): packages are layered with rpm-ostree, not dnf
@@ -68,4 +66,3 @@ FPKG_TOOLS=(wf-recorder grim slurp wl-clipboard cliphist wtype libnotify xdg-use
 FPKG_FONTS=(rsms-inter-fonts google-noto-sans-fonts google-noto-emoji-fonts)
 FPKG_LOOK=(papirus-icon-theme adw-gtk3-theme adwaita-cursor-theme)
 FEDORA_PKGS=("${FPKG_DESKTOP[@]}" "${FPKG_SHELL[@]}" "${FPKG_TOOLS[@]}" "${FPKG_FONTS[@]}" "${FPKG_LOOK[@]}")
-
