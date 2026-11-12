@@ -77,17 +77,25 @@ Item {
 
     readonly property bool listening: running && visible
     CavaUser { active: vz.listening }
+    Timer {
+        id: silenceTimer
+        interval: 1000
+        onTriggered: vz.quiet = true
+    }
     Connections {
         target: CavaFeed
         enabled: vz.listening
         function onFrame() {
             const p = CavaFeed.bands
             if (p.length === 0) return
+            const sound = p.some(v => v > 0)
+            if (sound) silenceTimer.stop()
+            else if (!vz.quiet && !silenceTimer.running) silenceTimer.start()
             // rises at once, falls softly
             const o = vz.bars, q = []
             let loud = 0
             for (let i = 0; i < p.length; i++) { const a = o[i] !== undefined ? o[i] : 0; const v = p[i] >= a ? p[i] : a * 0.8 + p[i] * 0.2; q.push(v); if (v > loud) loud = v }
-            // silence: draw the empty picture once, then nothing (no work 30 times a second for no sound)
+            // silence: keep the last picture for the fade, then stop repainting until sound returns
             if (loud < 0.5 && vz.quiet) return
             vz.quiet = loud < 0.5
             vz.bars = q
@@ -96,10 +104,12 @@ Item {
     }
 
     // everything is drawn here
-    property bool quiet: false
+    property bool quiet: true
     Canvas {
         id: cv
         anchors.fill: parent
+        opacity: vz.quiet ? 0 : 1
+        Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.OutCubic } }
         onVisibleChanged: requestPaint()
         onPaint: {
             const c = getContext("2d")
