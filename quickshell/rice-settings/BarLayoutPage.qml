@@ -33,6 +33,8 @@ Item {
         running: true
         stdout: StdioCollector { onStreamFinished: { try { page.qb = JSON.parse(text); page.pull() } catch (e) { } } }
     }
+    Timer { id: refresh; interval: 800; onTriggered: qproc.running = true }
+    onVisibleChanged: if (visible) qproc.running = true
 
     // local copy so drops show at once; refreshed from Settings state when not dragging
     property var lay: ({ left: [], center: [], right: [], available: [] })
@@ -135,10 +137,24 @@ Item {
         }
     }
 
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
+        contentWidth: width
+        contentHeight: col.implicitHeight + 24
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        Behavior on contentY {
+            enabled: !flick.dragging && !flick.flicking && !flickWheel.active
+            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+        }
+        WheelScroll { id: flickWheel; flick: flick }
+
     Column {
         id: col
-        x: 24
-        width: parent.width - 48
+        width: flick.width
         spacing: 10
 
         SectionTitle {
@@ -194,6 +210,17 @@ Item {
         SectionTitle {
             text: I18n.t("Bar layout")
             sub: I18n.t("Drag a module to move it. Drop it between others to change the order, or into \"Not on the bar\" to hide it. ")
+        }
+        ToggleRow {
+            label: I18n.t("Symmetric notch bar")
+            desc: I18n.t("Keep the Notch background symmetric around the island; off fits the background to the modules")
+            checked: page.qb.notch_symmetric === true
+            onToggled: function(x) {
+                page.qb = Object.assign({}, page.qb, { notch_symmetric: x })
+                page.qrun(["set", "notch_symmetric", x ? "on" : "off"])
+                page.ctl.status = I18n.t("Applied")
+                refresh.restart()
+            }
         }
 
         // ---------- the bar ----------
@@ -287,6 +314,7 @@ Item {
                 }
             }
         }
+    }
     }
 
     // floating copy under the pointer while dragging

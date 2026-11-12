@@ -939,9 +939,9 @@ PanelWindow {
             visible: bar.notch && bar.barK > 0.01
             opacity: bar.barK
             flip: bar.atBottom
-            width: Math.round(2 * body.nHalf) + 2 * ear + 40
+            width: Math.round(bar.bc.notch_symmetric === true ? 2 * body.nHalf : body.nW) + 2 * ear + 40
             height: bar.barH + bar.gap
-            x: Math.round(body.width / 2 - body.nHalf) - ear - 20
+            x: (bar.bc.notch_symmetric === true ? Math.round(body.width / 2 - body.nHalf) : body.nX) - ear - 20
             y: bar.atBottom ? 0 : -bar.gap
             fill: Qt.rgba(0.02, 0.02, 0.025, Look.flat ? 1 : bar.alpha)
             shadow: bar.shadowOn

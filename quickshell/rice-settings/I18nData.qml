@@ -1959,6 +1959,8 @@ Singleton {
             "Scan every week": "Elke week scannen"
         }),
         "ru": ({
+            "Symmetric notch bar": "Симметричный бар Notch",
+            "Keep the Notch background symmetric around the island; off fits the background to the modules": "Симметричный фон вокруг островка; если выключено, фон подстраивается под элементы",
             "Home": "Главная",
             "Sfx & sounds": "Звуки и эффекты",
             "DarkShadow bar": "Панель DarkShadow",
@@ -2046,6 +2048,8 @@ Singleton {
             "Scan every week": "Сканировать каждую неделю"
         }),
         "uk": ({
+            "Symmetric notch bar": "Симетрична панель Notch",
+            "Keep the Notch background symmetric around the island; off fits the background to the modules": "Симетричне тло навколо острівця; якщо вимкнено, тло підлаштовується під елементи",
             "Home": "Головна",
             "Sfx & sounds": "Звуки та ефекти",
             "DarkShadow bar": "Панель DarkShadow",
