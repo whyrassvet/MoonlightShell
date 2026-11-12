@@ -643,11 +643,10 @@ PanelWindow {
     Component { id: mBattery
         Item { readonly property bool shown: bar.hasBatt; width: bt.implicitWidth + 4; height: bar.barH
             Row { id: bt; anchors.centerIn: parent; spacing: 5
-                MIcon { size: 16; anchors.verticalCenter: parent.verticalCenter
+                BatteryIcon { size: 16; anchors.verticalCenter: parent.verticalCenter
                     color: !bar.charging && bar.battPct <= 15 ? "#ff6b6b" : bar.fg
-                    name: bar.charging ? "battery_charging_full" : "battery_full"
-                    glyph: String.fromCodePoint(bar.charging ? 0xF0084 : 0xF0079) }
-                Text { anchors.verticalCenter: parent.verticalCenter; text: bar.battPct + "%"; color: bar.dim; font.family: Fonts.main; font.pixelSize: 12 }
+                    charging: bar.charging; percentage: bar.battPct }
+                Text { anchors.verticalCenter: parent.verticalCenter; text: bar.battPct + "%"; color: gp.fg; font.family: Fonts.main; font.pixelSize: 14; font.weight: Font.DemiBold }
             }
         }
     }
@@ -796,14 +795,15 @@ PanelWindow {
 
     Component { id: mPower
         Item { property bool shown: true; width: 22; height: bar.barH
-            MIcon { anchors.centerIn: parent; name: "power_settings_new"; glyph: String.fromCodePoint(0xF0425); size: 18; color: pm.containsMouse ? "#ff6b6b" : bar.dim
-                Behavior on color { ColorAnimation { duration: 150 } } }
+            PowerIcon { anchors.centerIn: parent; size: 18
+                readonly property var pl: bar.logoPal(bar.logoKey === "blackhole" ? "blackhole" : "moon")
+                iconColor: pl[0] }
             MouseArea { id: pm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.LeftButton | Qt.RightButton
                 onClicked: function(m) {
                     const p = mapToItem(null, width / 2, 0)
                     bar.run("\"$HOME/.local/bin/rice-power\" " + Math.round(p.x))
                 } }
-            HoverLine { on: pm.containsMouse; color: "#ff6b6b" }
+            HoverLine { on: pm.containsMouse; color: bar.logoPal(bar.logoKey === "blackhole" ? "blackhole" : "moon")[0] }
         }
     }
 

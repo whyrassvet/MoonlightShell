@@ -407,9 +407,9 @@ PanelWindow {
     }
     Component { id: cBatt
         Column { visible: vb.hasBatt; spacing: 1
-            MIcon { anchors.horizontalCenter: parent.horizontalCenter; size: 17; color: !vb.charging && vb.battPct <= 15 ? "#ff6b6b" : vb.fg
-                name: vb.charging ? "battery_charging_full" : "battery_full"; glyph: String.fromCodePoint(vb.charging ? 0xF0084 : 0xF0079) }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: vb.battPct; color: vb.dim; font.family: Fonts.main; font.pixelSize: 10 }
+            BatteryIcon { anchors.horizontalCenter: parent.horizontalCenter; size: 17; color: !vb.charging && vb.battPct <= 15 ? "#ff6b6b" : vb.fg
+                charging: vb.charging; percentage: vb.battPct }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: vb.battPct + "%"; color: gp.fg; font.family: Fonts.main; font.pixelSize: 10; font.weight: Font.DemiBold }
         }
     }
     Component { id: cNotif
@@ -417,8 +417,15 @@ PanelWindow {
             onHit: function(m) { vb.run(m.button === Qt.RightButton ? "\"$HOME/.local/bin/rice-cc\" dnd toggle" : "\"$HOME/.local/bin/rice-cc\" toggle"); svcAgain.restart() } }
     }
     Component { id: cPower
-        Btn { id: pbtn; icon: "power_settings_new"; glyph: String.fromCodePoint(0xF0425); tint: "#ff8a80"
-            onHit: function(m) { vb.run("\"$HOME/.local/bin/rice-power\" " + vb.menuAt(pbtn)) } }
+        Item { id: pbtn; width: vb.barW - 10; height: width
+            Rectangle { anchors.fill: parent; radius: width / 2; color: vb.fg; opacity: pm.containsMouse ? 0.1 : 0
+                Behavior on opacity { NumberAnimation { duration: 140 } } }
+            PowerIcon { anchors.centerIn: parent; size: 19
+                readonly property var pl: vb.logoPal(vb.logoKey === "blackhole" ? "blackhole" : "moon")
+                iconColor: pl[0] }
+            MouseArea { id: pm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: { Sfx.play("click"); vb.run("\"$HOME/.local/bin/rice-power\" " + vb.menuAt(pbtn)) } }
+        }
     }
     // Weather, System, Date: their cards open at the top of the screen, beside this bar (Bar.qml shows them)
     function pop(k) { run("mkdir -p \"$HOME/.cache/rice\"; printf '%s %s %s\\n' \"$(date +%s.%N)\" " + k + " " + (atRight ? (vb.screen ? vb.screen.width - 420 : 1500) : 230) + " > \"$HOME/.cache/rice/barpop-open\"") }
