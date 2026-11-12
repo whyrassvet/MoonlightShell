@@ -64,11 +64,21 @@ PanelWindow {
         stdout: StdioCollector { onStreamFinished: { try { cc.sv = JSON.parse(text) } catch (e) { } } }
     }
     Process {
+        id: brightProc
+        command: ["brightnessctl", "-m"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                const n = parseInt(text.split(",")[3])
+                cc.bright = isNaN(n) ? -1 : n
+            }
+        }
+    }
+    Process {
         id: netProc
         command: ["bash", "-c", [
             "echo \"ssid=$(nmcli -t -f active,ssid dev wifi 2>/dev/null | sed -n 's/^yes://p' | head -1)\"",
-            "echo \"bt=$(bluetoothctl devices Connected 2>/dev/null | head -1 | cut -d' ' -f3-)\"",
-            "command -v brightnessctl >/dev/null && echo \"br=$(brightnessctl -m 2>/dev/null | cut -d, -f4 | tr -d %)\""
+            "echo \"bt=$(bluetoothctl devices Connected 2>/dev/null | head -1 | cut -d' ' -f3-)\""
         ].join("; ")]
         stdout: StdioCollector {
             onStreamFinished: {
@@ -77,7 +87,6 @@ PanelWindow {
                     const k = l.substring(0, i), v = l.substring(i + 1).trim()
                     if (k === "ssid") cc.ssid = v
                     else if (k === "bt") cc.btDev = v
-                    else if (k === "br") { const n = parseInt(v); cc.bright = isNaN(n) ? -1 : n }
                 })
             }
         }
@@ -97,7 +106,7 @@ PanelWindow {
             if (j) cc.recStart = j.start || Date.now() / 1000
         }
     }
-    function refresh() { if (!svProc.running) svProc.running = true; if (!netProc.running) netProc.running = true; now = new Date() }
+    function refresh() { if (!svProc.running) svProc.running = true; if (!netProc.running) netProc.running = true; if (!brightProc.running) brightProc.running = true; now = new Date() }
     Timer { interval: 4000; running: cc.open; repeat: true; onTriggered: cc.refresh() }
     Timer { interval: 1000; running: cc.open; repeat: true; onTriggered: cc.now = new Date() }
     Timer { id: again; interval: 900; onTriggered: cc.refresh() }
