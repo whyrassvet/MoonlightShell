@@ -34,7 +34,7 @@ Item {
         going = false
         const wasFocus = mode === "focus"
         if (wasFocus) sessions++
-        Quickshell.execDetached(["notify-send", "-a", "DarkShadow's Shell", "-i", "alarm",
+        Quickshell.execDetached(["notify-send", "-a", "Moonlight Shell", "-i", "alarm",
                                  wasFocus ? "Focus session done" : "Break is over",
                                  wasFocus ? "Time for a " + breakMin + " minute break." : "Ready for the next session?"])
         Sfx.play("done")

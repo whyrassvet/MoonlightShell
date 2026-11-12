@@ -1,6 +1,6 @@
 import QtQuick
 
-// The DarkShadow's Shell logo, alive: a black hole. A glowing disk of matter turns around a perfectly black
+// The Moonlight Shell logo, alive: a black hole. A glowing disk of matter turns around a perfectly black
 // shadow, the light from behind it bends over the top (the halo), a thin photon ring shines at its edge, bits of
 // matter spiral in, and a few stars twinkle around. No background, so it sits on anything.
 // (The file keeps its old name, MoonLogo, so every place that shows the logo got the new one at once.)

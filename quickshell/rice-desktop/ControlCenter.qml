@@ -111,7 +111,7 @@ PanelWindow {
     }
 
     Trigger {
-        name: "cc-open"; fresh: true
+        name: "cc-open"
         onFired: function(o) {
             const w = o.split(" ")[1] || "toggle"
             cc.open = w === "open" ? true : (w === "close" ? false : !cc.open)
@@ -360,7 +360,7 @@ PanelWindow {
                         onClicked: { cc.bin(["rice-hotcorner", "record", cc.recording ? "stop" : "full"]); if (cc.recording) cc.recording = false; else cc.open = false } }
                     Tile { width: parent.tw
                         readonly property string p: cc.sv.profile || ""
-                        visible: cc.sv.have && cc.sv.have.powerprofilesctl === true
+                        visible: !!cc.sv.have && cc.sv.have.powerprofilesctl === true
                         icon: p === "performance" ? "bolt" : (p === "power-saver" ? "eco" : "balance"); glyph: ""
                         label: p === "performance" ? Tr.t("High") : (p === "power-saver" ? Tr.t("Low") : Tr.t("Medium")); on: p === "performance"
                         onClicked: {

@@ -261,7 +261,7 @@ FloatingWindow {
         status = "Applied"
         drefresh.restart()
     }
-    // widget style: shadow (DarkShadow's Shell), google, outline
+    // widget style: shadow (Moonlight Shell), google, outline
     function setWidgetTheme(v) {
         const d = JSON.parse(JSON.stringify(dst)); d.widgetTheme = v; dst = d
         Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/desktop-set\" widgets-theme \"$1\"", "_", v])
@@ -721,7 +721,7 @@ FloatingWindow {
             id: overline
             x: win.railW + 28
             y: 20
-            text: (I18n.t("DarkShadow's Shell  ·  ") + win.curRail.caption).toUpperCase()
+            text: (I18n.t("Moonlight Shell  ·  ") + win.curRail.caption).toUpperCase()
             font.pixelSize: 11
             font.weight: Font.DemiBold
             font.letterSpacing: 1.1
@@ -971,7 +971,7 @@ FloatingWindow {
             onActiveChanged: if (active) win.tourOn = true
             nav: win
             steps: [
-                { title: I18n.t("Welcome to DarkShadow's Shell"), art: "welcome", icon: "waving_hand", page: 0,
+                { title: I18n.t("Welcome to Moonlight Shell"), art: "welcome", icon: "waving_hand", page: 0,
                   body: "A one-minute tour: where things are on your desktop and in Settings. Enter or the arrow keys move on, Esc ends it." },
                 { title: I18n.t("The Dynamic island"), art: "island", spot: "island", icon: "smart_display",
                   body: "The pill in the middle of your bar. It shows the time and the weather, and grows for music, the volume, workspace changes, recordings and notifications." },

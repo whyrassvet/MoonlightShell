@@ -105,7 +105,7 @@ Item {
                 height: sum.implicitHeight
                 Text {
                     id: sum
-                    text: I18n.t("DarkShadow's Shell")
+                    text: I18n.t("Moonlight Shell")
                     font.family: m.fam.length > 0 ? m.fam : Fonts.family("main")
                     font.pixelSize: 13 * m.fs
                     font.bold: true

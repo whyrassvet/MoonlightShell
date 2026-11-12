@@ -2,7 +2,7 @@ import Quickshell
 import Quickshell.Io
 import QtQuick
 
-// Settings > About: the version of DarkShadow's Shell, updates, this computer and what it is made with.
+// Settings > About: the version of Moonlight Shell, updates, this computer and what it is made with.
 Item {
     id: page
     property var ctl
@@ -56,7 +56,7 @@ Item {
                 x: 212; anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - 212 - 24
                 spacing: 6
-                T { kind: "title"; text: I18n.t("DarkShadow's Shell"); font.pixelSize: 28; font.weight: Font.Medium; color: M3.inkPrimaryC }
+                T { kind: "title"; text: I18n.t("Moonlight Shell"); font.pixelSize: 28; font.weight: Font.Medium; color: M3.inkPrimaryC }
                 Row {
                     spacing: 8
                     Rectangle { width: vt.implicitWidth + 20; height: 26; radius: 13; color: M3.primary
@@ -76,7 +76,7 @@ Item {
         }
 
         // ---------- this computer ----------
-        SectionTitle { text: I18n.t("This computer"); sub: I18n.t("What DarkShadow's Shell runs on.") }
+        SectionTitle { text: I18n.t("This computer"); sub: I18n.t("What Moonlight Shell runs on.") }
         Grid {
             id: grid
             width: parent.width

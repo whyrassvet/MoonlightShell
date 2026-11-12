@@ -93,7 +93,7 @@ Item {
                 spacing: 4
                 Row {
                     spacing: 10
-                    T { kind: "title"; text: I18n.t("DarkShadow's Shell"); font.pixelSize: 28; font.weight: Font.Medium }
+                    T { kind: "title"; text: I18n.t("Moonlight Shell"); font.pixelSize: 28; font.weight: Font.Medium }
                     T { anchors.baseline: parent.children[0].baseline; text: page.info.version ? "V" + page.info.version : ""; font.pixelSize: 16; color: M3.primary }
                 }
                 T { text: (page.info.os || "Linux") + "  ·  " + (page.info.host || ""); font.pixelSize: 13; color: M3.inkDim }

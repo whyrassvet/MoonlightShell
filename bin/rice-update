@@ -25,11 +25,11 @@ STATE = CACHE + "/update.json"
 NOTIFIED = CACHE + "/update-notified"
 LIVE_LOG = CACHE + "/update-live.log"
 LIVE = CACHE + "/update-live.json"
-RAW = "https://raw.githubusercontent.com/shadowww-dev/DarkShadowShell/main/VERSION"
+RAW = "https://raw.githubusercontent.com/whyrassvet/MoonlightShell/main/VERSION"
 FIRST_WAIT = 45            # seconds after login
 EVERY = 15 * 60            # GitHub is asked every 15 minutes
 TICK = 30                  # a check from the About tab of the dashboard is noticed within this many seconds
-APP = "DarkShadow's Shell"
+APP = "Moonlight Shell"
 ICON = HOME + "/.local/share/rice/icon.png"
 
 
@@ -40,7 +40,7 @@ def repo():
             return r
     except OSError:
         pass
-    r = HOME + "/shadows-shell"
+    r = HOME + "/moonlight-shell"
     return r if os.path.exists(r + "/install.sh") else None
 
 
@@ -73,20 +73,6 @@ def git(r, *a, timeout=25):
                           timeout=timeout, env=env)
 
 
-NEW_URL = "https://github.com/shadowww-dev/DarkShadowShell.git"
-
-
-def fix_remote(r):
-    """the project moved (shadows-shell -> DarkShadowShell): an old address goes to the new one, before GitHub's
-    redirect is the thing that asks for a login"""
-    try:
-        u = git(r, "remote", "get-url", "origin", timeout=5).stdout.strip()
-        if "shadowww-dev/shadows-shell" in u:
-            git(r, "remote", "set-url", "origin", NEW_URL, timeout=5)
-    except Exception:
-        pass
-
-
 def news(text, version):
     """first lines of the CHANGELOG entry for this version"""
     out, on = [], False
@@ -111,7 +97,6 @@ def latest(offline=False):
     if r and os.path.isdir(r + "/.git") and shutil.which("git"):
         try:
             if not offline:
-                fix_remote(r)
                 f = git(r, "fetch", "--quiet")
                 if f.returncode != 0:
                     err = (f.stderr.strip().splitlines() or ["git fetch failed"])[-1]
@@ -226,7 +211,7 @@ def gui(args):
     os.makedirs(CACHE, exist_ok=True)
     if not r:
         open(LIVE_LOG, "w").write("    \u2718 Could not find your copy of the repo (~/shadows-shell). Clone it again:\n"
-                                  "      git clone https://github.com/shadowww-dev/DarkShadowShell ~/shadows-shell\n")
+                                  "      git clone https://github.com/whyrassvet/MoonlightShell ~/moonlight-shell\n")
         put_live(state="failed", code=1, started=int(time.time()), ended=int(time.time()), pid=0)
         return 1
     if os.fork() != 0:
@@ -344,7 +329,7 @@ def run(args):
     r = repo()
     if not r:
         print("Could not find your copy of the repo. Clone it again:")
-        print("  git clone https://github.com/shadowww-dev/DarkShadowShell ~/shadows-shell")
+        print("  git clone https://github.com/whyrassvet/MoonlightShell ~/moonlight-shell")
         input("Press Enter to close")
         sys.exit(1)
     os.chdir(r)

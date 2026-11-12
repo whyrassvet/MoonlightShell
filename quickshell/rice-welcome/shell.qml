@@ -4,7 +4,7 @@ import Quickshell.Wayland
 import QtQuick
 import QtQuick.Effects
 
-// The welcome intro, shown once after DarkShadow's Shell is installed (rice-welcome show plays it again).
+// The welcome intro, shown once after Moonlight Shell is installed (rice-welcome show plays it again).
 // Night falls over the desktop from the middle of the screen, a few words rise letter by letter, the moon
 // draws itself in, and "Take a look" opens the night up again from the moon. Then Settings opens with a
 // short tour.
@@ -205,7 +205,7 @@ ShellRoot {
             T {
                 anchors.horizontalCenter: parent.horizontalCenter
                 kind: "title"
-                text: "DarkShadow's Shell"
+                text: "Moonlight Shell"
                 font.pixelSize: 40
                 font.bold: true
                 // the letters come together

@@ -167,7 +167,7 @@ Item {
     function upText(sec) { const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60; return (h > 0 ? h + " h " : "") + m + " min" }
 
 
-    // the About tab: the system's name, DarkShadow's Shell and its updates
+    // the About tab: the system's name, Moonlight Shell and its updates
     property string osName: "Linux"
     Process {
         running: true
@@ -693,7 +693,7 @@ Item {
             }
 
 
-            // ---------- about: your system and DarkShadow's Shell (with updates) ----------
+            // ---------- about: your system and Moonlight Shell (with updates) ----------
             Item {
                 id: ab
                 x: 0; y: 62; width: parent.width; height: parent.height - 62
@@ -715,7 +715,7 @@ Item {
                     x: 142; y: 18; width: parent.width - 142 - 24; spacing: 3
                     Text { text: Tr.t("Your system"); color: fInfo.pp ? fInfo.pp.primary : "#aaa"; font.family: Fonts.main; font.pixelSize: 12; font.weight: Font.DemiBold }
                     Text { width: parent.width; elide: Text.ElideRight; text: isl.osName; color: fInfo.pp ? fInfo.pp.fg : "white"; font.family: Fonts.main; font.pixelSize: 24; font.weight: Font.DemiBold }
-                    Text { width: parent.width; elide: Text.ElideRight; text: Tr.t("DarkShadow's Shell") + (isl.up.installed ? "  V" + isl.up.installed : "")
+                    Text { width: parent.width; elide: Text.ElideRight; text: Tr.t("Moonlight Shell") + (isl.up.installed ? "  V" + isl.up.installed : "")
                         color: fInfo.pp ? fInfo.pp.dim : "#aaa"; font.family: Fonts.main; font.pixelSize: 13 }
                 }
                 // updates

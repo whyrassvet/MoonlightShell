@@ -1,6 +1,6 @@
 import QtQuick
 
-// The old DarkShadow's Shell logo (for the bar's launcher button), alive: a crescent moon that floats and sways, twinkling stars around it,
+// The old Moonlight Shell logo (for the bar's launcher button), alive: a crescent moon that floats and sways, twinkling stars around it,
 // a soft glow and now and then a shooting star. No background, so it sits on anything.
 //   size     width and height
 //   running  play the animations (pause them when the logo is not on screen)

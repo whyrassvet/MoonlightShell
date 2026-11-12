@@ -45,7 +45,7 @@ Item {
     Timer { id: refresh; interval: 500; onTriggered: stateProc.running = true }
 
     property string openKey: ""     // the card whose suggestions are open
-    property string sampleText: "DarkShadow's Shell — made for you"
+    property string sampleText: "Moonlight Shell — made for you"
     // the 15 roles of the Material 3 type scale: name, size, weight
     readonly property var scale: [
         ["displayLarge", 57, Font.Normal], ["displayMedium", 45, Font.Normal], ["displaySmall", 36, Font.Normal],

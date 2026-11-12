@@ -199,7 +199,7 @@ Item {
                     text: page.running ? (page.current ? page.current.t : I18n.t("Getting the newest version from GitHub..."))
                         : page.failed ? I18n.t("Nothing is broken: what was done stays, the rest keeps your old files. Try again, or look at the steps below.")
                         : page.hasUpdate ? (page.st.installed !== page.st.latest ? I18n.t("You have V%1.", page.st.installed) : I18n.t("%1 new changes on GitHub.", page.st.changes))
-                        : I18n.t("DarkShadow's Shell V%1", page.st.installed || "?") + (page.st.checked ? "  ·  " + I18n.t("checked %1", page.ago(page.st.checked)) : "") }
+                        : I18n.t("Moonlight Shell V%1", page.st.installed || "?") + (page.st.checked ? "  ·  " + I18n.t("checked %1", page.ago(page.st.checked)) : "") }
                 // the progress line while it runs
                 Item {
                     width: parent.width; height: page.running ? 22 : 0
@@ -328,7 +328,7 @@ Item {
                 }
             }
             Btn { text: I18n.t("All changes on GitHub"); sym: "open_in_new"; icon: ""; variant: "text"
-                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/shadowww-dev/DarkShadowShell/blob/main/CHANGELOG.md"]) }
+                onClicked: Quickshell.execDetached(["xdg-open", "https://github.com/whyrassvet/MoonlightShell/commits/main"]) }
         }
 
         // ---------- more ----------

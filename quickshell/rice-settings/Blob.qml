@@ -1,6 +1,6 @@
 import QtQuick
 
-// The shape library of DarkShadow's Shell, drawn our own way (Settings > Appearance > Shapes shows them all).
+// The shape library of Moonlight Shell, drawn our own way (Settings > Appearance > Shapes shows them all).
 // Round:    circle, oval, pill, semicircle, arch, fan, bun, heart, ghostish
 // Polygons: square, slanted, arrow, triangle, diamond, pentagon, hexagon, gem (all with round corners)
 // Wavy:     cookie (= cookie9), cookie4, cookie6, cookie7, cookie12, sun, verysunny, flower, clover (= clover4),

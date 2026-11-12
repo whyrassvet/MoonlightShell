@@ -16,7 +16,7 @@ Singleton {
     // windows cover the desktop (rice-busy): the widgets' decorative motion pauses (nobody sees it, and the
     // compositor does not have to redraw the desktop under the windows)
     property bool covered: false
-    // widget style (Settings > Widgets > Theme): shadow (DarkShadow's Shell), google, outline
+    // widget style (Settings > Widgets > Theme): shadow (Moonlight Shell), google, outline
     property string theme: "google"
     // text and cards turn light or dark with the wallpaper behind each widget (Settings > Widgets)
     property bool adapt: true

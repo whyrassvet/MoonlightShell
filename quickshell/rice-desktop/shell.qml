@@ -594,7 +594,8 @@ ShellRoot {
     LazyPanel { name: "gamebar-open"; GamePanel { gb: root.cfg.gamebar ? root.cfg.gamebar : ({}) } }
     Notifs { id: notifs; islandTakes: mainBar.islandNotifs && notifs.shellMode }
     // made only when opened, let go two minutes after it closed (less memory from the start)
-    LazyPanel { name: "cc-open"; ControlCenter { nf: notifs } }
+    // Keep the control center ready so opening it never waits for component creation.
+    ControlCenter { nf: notifs }
 
     Dock { dc: root.cfg.dock ? root.cfg.dock : ({}) }
 

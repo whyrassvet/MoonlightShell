@@ -5,7 +5,7 @@ import QtQuick
 
 // Interface sounds (Settings > Sfx & sounds). Sfx.play("click") anywhere in this shell.
 // Plays with QtMultimedia when it is installed (instant), else with pw-play / paplay.
-// Only DarkShadow's Shell's own parts use it, never other apps.
+// Only Moonlight Shell's own parts use it, never other apps.
 Singleton {
     id: sfx
     property bool enabled: true
