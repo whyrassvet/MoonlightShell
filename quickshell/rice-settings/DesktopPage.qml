@@ -216,7 +216,7 @@ Item {
 
             ToggleRow {
                 label: I18n.t("Auto-hide widgets")
-                desc: I18n.t("Hide them while a tiled window is open on the screen; floating windows (Settings, pop-ups) leave them alone. Lighter on the computer")
+                desc: page.ctl.lightMode ? I18n.t("Light mode hides widgets regardless of this switch") : I18n.t("Hide them while a tiled window is open on the screen; floating windows (Settings, pop-ups) leave them alone. Lighter on the computer")
                 checked: page.ctl.dst.autoHide === true
                 onToggled: function(v) { page.ctl.setAutoHide(v) }
             }
@@ -334,15 +334,12 @@ Item {
             Item {
                 id: perf
                 width: parent.width; height: perfCol.implicitHeight
-                property bool lite: false
-                Process { running: true; command: ["bash", "-c", "\"$HOME/.local/bin/rice-effects\" state 2>/dev/null"]
-                    stdout: StdioCollector { onStreamFinished: { try { perf.lite = JSON.parse(text).lite === true } catch (e) { } } } }
                 Column {
                     id: perfCol
                     width: parent.width; spacing: 8
                     ToggleRow { label: I18n.t("Light mode"); desc: I18n.t("For laptops and older graphics: no blur, no see-through, no shadows, quicker panels, widgets hide behind windows")
-                        checked: perf.lite
-                        onToggled: function(v) { perf.lite = v; Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-effects\" lite \"$1\"", "_", v ? "on" : "off"]) } }
+                        checked: page.ctl.lightMode
+                        onToggled: function(v) { page.ctl.setLightMode(v) } }
                     T { width: parent.width; wrapMode: Text.WordWrap; kind: "dim"
                         text: I18n.t("Less memory: turn off the widgets you do not use (an off widget takes no memory now), and the Visualizer. Panels like the control center are only made when you open them.") }
                 }

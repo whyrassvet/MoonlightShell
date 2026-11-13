@@ -20,7 +20,7 @@ Item {
     property bool seen: false
 
     width: parent ? parent.width : 0
-    y: idx === 0 || idx === 16 ? 0 : 44
+    y: idx === 0 || idx === 16 ? 0 : (nav && nav.subgroupInset(idx) >= 0 ? nav.subgroupInset(idx) : 44)
     height: parent ? parent.height - y : 0
     visible: inner.opacity > 0.01
     enabled: on

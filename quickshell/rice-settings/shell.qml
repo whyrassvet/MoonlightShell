@@ -56,6 +56,29 @@ FloatingWindow {
         stdout: StdioCollector { onStreamFinished: { try { win.stars = JSON.parse(text).stars !== false } catch (e) { } } }
     }
     // Auto-hide widgets (Home and Widgets): widgets rest while a tiled window covers the screen
+    property bool lightMode: false
+    function refreshLightMode() { if (!lightState.running && !lightSet.running) lightState.running = true }
+    function setLightMode(on) {
+        if (lightSet.running) return
+        lightMode = on
+        lightSet.command = [home + "/.local/bin/rice-effects", "lite", on ? "on" : "off"]
+        lightSet.running = true
+    }
+    Process {
+        id: lightState
+        command: [win.home + "/.local/bin/rice-effects", "state"]
+        running: true
+        stdout: StdioCollector { onStreamFinished: { if (!lightSet.running) try { win.lightMode = JSON.parse(text).lite === true } catch (e) {} } }
+    }
+    Process {
+        id: lightSet
+        onExited: function(code) {
+            win.status = code === 0 ? I18n.t("Saved") : I18n.t("That did not work")
+            lightRefresh.restart()
+        }
+    }
+    Timer { id: lightRefresh; interval: 300; onTriggered: win.refreshLightMode() }
+    Timer { interval: 5000; running: true; repeat: true; onTriggered: win.refreshLightMode() }
     function setAutoHide(on) {
         const d = JSON.parse(JSON.stringify(win.dst)); d.autoHide = on; win.dst = d
         Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/desktop-set\" auto-hide \"$1\"", "_", on ? "on" : "off"])
@@ -371,6 +394,44 @@ FloatingWindow {
     function railOf(idx) { for (let i = 0; i < rail.length; i++) if (rail[i].pages.indexOf(idx) >= 0) return i; return 0 }
     readonly property int curRailIdx: railOf(page)
     readonly property var curRail: rail[curRailIdx]
+    readonly property var desktopGroups: [
+        { name: "Desktop", pages: niri ? [29, 11] : [29, 33, 11] },
+        { name: "Windows", pages: [25, 4] },
+        { name: "Bar & apps", pages: [2, 3, 6, 7, 10] },
+        { name: "Widgets", pages: [12] },
+        { name: "Dock", pages: [14] }
+    ]
+    readonly property var appearanceGroups: [
+        { name: "Themes", pages: [34, 18, 8, 21] },
+        { name: "Details", pages: [19, 24, 22, 9] },
+        { name: "Motion", pages: [20] }
+    ]
+    readonly property var systemGroups: [
+        { name: "Sound", pages: [1] },
+        { name: "Language & input", pages: [26, 31, 23, 30] },
+        { name: "System tools", pages: [28, 5, 15] }
+    ]
+    function subgroupsFor(idx) {
+        const gid = rail[railOf(idx)].gid
+        return gid === "desk" ? desktopGroups : (gid === "look" ? appearanceGroups : (gid === "sys" ? systemGroups : []))
+    }
+    function subgroupOf(idx) {
+        const groups = subgroupsFor(idx)
+        for (let i = 0; i < groups.length; i++)
+            if (groups[i].pages.indexOf(idx) >= 0) return i
+        return -1
+    }
+    function subgroupInset(idx) {
+        const group = subgroupOf(idx)
+        return group < 0 ? -1 : (subgroupsFor(idx)[group].pages.length > 1 ? 84 : 40)
+    }
+    readonly property var currentSubgroups: subgroupsFor(page)
+    readonly property int currentSubgroup: subgroupOf(page)
+    property var lastSubgroupPage: ({})
+    function goSubgroup(i) {
+        const key = curRail.gid + ":" + i
+        page = lastSubgroupPage[key] !== undefined ? lastSubgroupPage[key] : currentSubgroups[i].pages[0]
+    }
     property var lastIn: ({})
     function goRail(i) { const r = rail[i]; page = lastIn[i] !== undefined ? lastIn[i] : r.pages[0] }
     readonly property var navRows: {
@@ -434,12 +495,20 @@ FloatingWindow {
     property int navY: 0
     function navFrom(a, b) {
         const ra = railOf(a), rb = railOf(b)
-        if (ra === rb) {
+        const da = subgroupOf(a), db = subgroupOf(b)
+        if (ra === rb && da >= 0 && db >= 0 && da !== db) {
+            navX = da < db ? -1 : 1; navY = 0
+        } else if (ra === rb) {
             const l = rail[ra].pages
             navX = l.indexOf(b) >= l.indexOf(a) ? 1 : -1; navY = 0
         } else { navX = 0; navY = -1 }
     }
-    onPageChanged: { navFrom(prevPage, page); prevPage = page; openFor(page); const n = Object.assign({}, lastIn); n[railOf(page)] = page; lastIn = n }
+    onPageChanged: {
+        navFrom(prevPage, page); prevPage = page; openFor(page)
+        const n = Object.assign({}, lastIn); n[railOf(page)] = page; lastIn = n
+        const group = subgroupOf(page)
+        if (group >= 0) { const d = Object.assign({}, lastSubgroupPage); d[rail[railOf(page)].gid + ":" + group] = page; lastSubgroupPage = d }
+    }
     Component.onCompleted: openFor(page)
 
     readonly property string hyprTool: home + "/.local/bin/hypr-set"
@@ -779,13 +848,41 @@ FloatingWindow {
             MouseArea { anchors.fill: parent; z: -1; cursorShape: Qt.IBeamCursor; onClicked: searchIn.forceActiveFocus() }
         }
 
+        // Subgroups sit above their page tabs.
+        Row {
+            id: subgroupRow
+            visible: win.currentSubgroup >= 0
+            x: win.railW + 26
+            y: 84
+            spacing: 8
+            Repeater {
+                model: win.currentSubgroups
+                delegate: Rectangle {
+                    readonly property bool selected: win.currentSubgroup === index
+                    width: subgroupLabel.implicitWidth + 28
+                    height: 34
+                    radius: 17
+                    color: selected ? M3.secondaryContainer : (subgroupMouse.containsMouse ? M3.surfaceHigh : "transparent")
+                    T {
+                        id: subgroupLabel
+                        anchors.centerIn: parent
+                        text: I18n.t(modelData.name)
+                        font.pixelSize: 12
+                        font.weight: selected ? Font.DemiBold : Font.Medium
+                        color: selected ? M3.inkSecondaryC : M3.inkDim
+                    }
+                    MouseArea { id: subgroupMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: win.goSubgroup(index) }
+                }
+            }
+        }
+
         // ================= tabs: the pages of this group =================
         Item {
             id: tabs
-            readonly property var list: win.curRail.pages
+            readonly property var list: win.currentSubgroup >= 0 ? win.currentSubgroups[win.currentSubgroup].pages : win.curRail.pages
             visible: list.length > 1
             x: win.railW + 20
-            y: 84
+            y: subgroupRow.visible ? 124 : 84
             width: parent.width - x - 20
             height: visible ? 46 : 0
             Flickable {

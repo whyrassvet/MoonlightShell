@@ -15,9 +15,9 @@ Item {
         "decoration.active_opacity", "decoration.inactive_opacity", "decoration.shadow.enabled", "decoration.shadow.range",
         "decoration.blur.enabled", "decoration.blur.size", "decoration.blur.passes", "decoration.blur.noise", "decoration.blur.vibrancy"]
     function fit(specs) { return niri ? specs.filter(x => niriKeys.indexOf(x.key) >= 0) : specs }
-    readonly property var tabs: niri ? ["Gaps", "Borders", "Rounding & Opacity", "Blur", "Keybinds", "Monitors"]
-                                     : ["Gaps", "Borders", "Layout", "Rounding & Opacity", "Blur", "Keybinds", "Monitors"]
-    readonly property var comps: niri ? [gapsC, bordersC, roundC, blurC, bindsC, monC] : [gapsC, bordersC, layoutC, roundC, blurC, bindsC, monC]
+    readonly property var tabs: niri ? ["Gaps", "Borders", "Rounding & Opacity", "Blur"]
+                                     : ["Gaps", "Borders", "Layout", "Rounding & Opacity", "Blur"]
+    readonly property var comps: niri ? [gapsC, bordersC, roundC, blurC] : [gapsC, bordersC, layoutC, roundC, blurC]
 
     readonly property var gapsSpec: [
         { key: "general.gaps_in", type: "slider", label: I18n.t("Inner gaps"), desc: I18n.t("Gaps between windows"), min: 0, max: 40, step: 1, unit: " px", def: 5 },
@@ -25,7 +25,6 @@ Item {
         { key: "general.gaps_workspaces", type: "slider", label: I18n.t("Workspace gaps"), desc: I18n.t("Gaps between workspaces"), min: 0, max: 100, step: 1, unit: " px", def: 0 }
     ]
     readonly property var bordersSpec: [
-        { key: "general.border_size", type: "slider", label: I18n.t("Border size"), desc: I18n.t("Thickness of window borders"), min: 0, max: 12, step: 1, unit: " px", def: 2 },
         { key: "general.resize_on_border", type: "toggle", label: I18n.t("Resize on border"), desc: I18n.t("Drag borders and gaps to resize windows") },
         { key: "general.extend_border_grab_area", type: "slider", label: I18n.t("Border grab area"), desc: I18n.t("How far from the border you can grab it"), min: 0, max: 60, step: 1, unit: " px", def: 15 },
         { key: "general.hover_icon_on_border", type: "toggle", label: I18n.t("Cursor icon on border"), desc: I18n.t("Show a resize cursor over borders") }
@@ -40,14 +39,11 @@ Item {
         { key: "general.snap.border_overlap", type: "toggle", label: I18n.t("Overlap borders"), desc: I18n.t("Snapped windows share one border line instead of two") }
     ]
     readonly property var roundSpec: [
-        { key: "decoration.rounding", type: "slider", label: I18n.t("Corner rounding"), desc: I18n.t("Radius of window corners"), min: 0, max: 40, step: 1, unit: " px", def: 10 },
         { key: "decoration.rounding_power", type: "slider", label: I18n.t("Rounding power"), desc: I18n.t("Curve of the corners (2 = circle, 4 = squircle)"), min: 2, max: 10, step: 0.5, dec: 1, def: 2 },
         { key: "decoration.active_opacity", type: "slider", label: I18n.t("Active window opacity"), desc: I18n.t("Opacity of the focused window"), min: 0.3, max: 1, step: 0.05, dec: 2, def: 1 },
         { key: "decoration.inactive_opacity", type: "slider", label: I18n.t("Inactive window opacity"), desc: I18n.t("Opacity of unfocused windows"), min: 0.3, max: 1, step: 0.05, dec: 2, def: 1 },
         { key: "decoration.dim_inactive", type: "toggle", label: I18n.t("Dim inactive windows"), desc: I18n.t("Darken windows that are not focused") },
         { key: "decoration.dim_strength", type: "slider", label: I18n.t("Dim strength"), desc: I18n.t("How dark inactive windows get"), min: 0, max: 1, step: 0.05, dec: 2, def: 0.5 },
-        { key: "decoration.shadow.enabled", type: "toggle", label: I18n.t("Window shadows"), desc: I18n.t("Draw a shadow behind windows") },
-        { key: "decoration.shadow.range", type: "slider", label: I18n.t("Shadow range"), desc: I18n.t("Size of the shadow"), min: 0, max: 60, step: 1, unit: " px", def: 4 },
         { key: "decoration.shadow.render_power", type: "slider", label: I18n.t("Shadow falloff"), desc: I18n.t("How fast the shadow fades (1 soft, 4 sharp)"), min: 1, max: 4, step: 1, def: 3 }
     ]
     readonly property var blurSpec: [
@@ -104,7 +100,7 @@ Item {
         x: 0
         y: tabsFlow.y + tabsFlow.height + 14
         width: parent.width
-        height: parent.height - y - 52
+        height: parent.height - y - (page.confirmReset ? 98 : 52)
         contentWidth: width
         contentHeight: contentLoader.height + 30
         clip: true
@@ -132,6 +128,14 @@ Item {
         }
     }
 
+    T {
+        visible: page.confirmReset
+        x: 24; y: parent.height - 92; width: parent.width - 48
+        wrapMode: Text.WordWrap
+        font.pixelSize: 12
+        color: M3.error
+        text: I18n.t("This resets window settings, monitors, keyboard layouts, custom keybinds and autostart. Click again to confirm.")
+    }
     Row {
         x: 24
         y: parent.height - 42
@@ -150,7 +154,7 @@ Item {
             }
         }
     }
-    Timer { id: resetTimer; interval: 4000; onTriggered: page.confirmReset = false }
+    Timer { id: resetTimer; interval: 10000; onTriggered: page.confirmReset = false }
 
     Component { id: gapsC; OptionsList { ctl: page.ctl; specs: page.fit(page.gapsSpec) } }
 
@@ -224,6 +228,4 @@ Item {
         }
     }
 
-    Component { id: bindsC; BindsPage { ctl: page.ctl } }
-    Component { id: monC; MonitorsPage { ctl: page.ctl } }
 }

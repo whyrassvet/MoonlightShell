@@ -87,13 +87,13 @@ Item {
         Head { icon: "rounded_corner"; glyph: ""; title: I18n.t("Borders and corners"); sub: I18n.t("Applied live to ") + (Quickshell.env("NIRI_SOCKET") ? "niri" : I18n.t("Hyprland")) + I18n.t(" windows") }
         SliderRow {
             label: I18n.t("Border thickness"); desc: I18n.t("0 hides the border")
-            from: 0; to: 8; step: 1; unit: " px"
+            from: 0; to: 12; step: 1; unit: " px"
             value: page.hv("general.border_size", 2)
             onCommitted: function(v) { page.ctl.hset("general.border_size", Math.round(v)) }
         }
         SliderRow {
             label: I18n.t("Corner rounding"); desc: I18n.t("Radius of window corners")
-            from: 0; to: 30; step: 1; unit: " px"
+            from: 0; to: 40; step: 1; unit: " px"
             value: page.hv("decoration.rounding", 10)
             onCommitted: function(v) { page.ctl.hset("decoration.rounding", Math.round(v)) }
         }

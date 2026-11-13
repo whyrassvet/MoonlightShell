@@ -42,22 +42,14 @@ Item {
     }
 
     // Light mode (rice-effects lite): for slower computers
-    property bool lite: false
-    function setLite(on) {
-        lite = on
-        Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-effects\" lite \"$1\"", "_", on ? "on" : "off"])
-        page.ctl.status = I18n.t("Light mode ") + (on ? "on" : "off")
-    }
-    Process {
-        command: ["bash", "-c", "\"$HOME/.local/bin/rice-effects\" state"]
-        running: true
-        stdout: StdioCollector { onStreamFinished: { try { page.lite = JSON.parse(text).lite === true } catch (e) { } } }
-    }
+    readonly property bool lite: page.ctl.lightMode
+    function setLite(on) { page.ctl.setLightMode(on) }
 
     // Profiles: the power mode of this computer (power-profiles-daemon). Only the modes this computer has are shown.
     property string profile: ""
     property var profiles: []
     function readProfile() { if (!profProc.running) profProc.running = true }
+    Connections { target: page.ctl; function onPageChanged() { if (page.ctl.page === 0) page.readProfile() } }
     property string wanted: ""
     function setProfile(k) {
         profile = k
@@ -278,7 +270,7 @@ Item {
                 property string label: I18n.t("Auto-hide widgets")
                 property string desc: I18n.t("Hide the desktop widgets while a window covers the screen; floating windows leave them alone")
                 property real reserved: 80
-                readonly property bool on: page.ctl.dst.autoHide === true || page.lite
+                readonly property bool on: page.ctl.dst.autoHide === true
                 width: parent.width
                 height: 76
                 radius: 14
@@ -302,7 +294,7 @@ Item {
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 2
                     T { text: I18n.t("Auto-hide widgets"); font.pixelSize: 13; font.bold: true }
-                    T { kind: "reading"; text: page.lite ? I18n.t("On while Light mode is on") : I18n.t("Widgets hide while a window covers the screen, and come back on an empty desktop"); color: M3.inkDim; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
+                    T { kind: "reading"; text: page.lite ? I18n.t("Light mode hides widgets regardless of this switch") : I18n.t("Widgets hide while a window covers the screen, and come back on an empty desktop"); color: M3.inkDim; font.pixelSize: 11; width: parent.width; wrapMode: Text.WordWrap }
                 }
                 Tog {
                     id: ahtog

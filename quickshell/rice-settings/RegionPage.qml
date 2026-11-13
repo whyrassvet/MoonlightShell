@@ -26,13 +26,6 @@ Item {
         ? ((now.getHours() + 11) % 12 + 1) + ":" + two(now.getMinutes()) + (now.getHours() < 12 ? " AM" : " PM")
         : two(now.getHours()) + ":" + two(now.getMinutes())
 
-    readonly property var langs: [
-        { k: "en", n: "English" }, { k: "pl", n: "Polski" }, { k: "de", n: "Deutsch" }, { k: "fr", n: "Français" },
-        { k: "es", n: "Español" }, { k: "pt", n: "Português" }, { k: "it", n: "Italiano" }, { k: "nl", n: "Nederlands" },
-        { k: "cs", n: "Čeština" }, { k: "uk", n: "Українська" }, { k: "ru", n: "Русский" }, { k: "tr", n: "Türkçe" },
-        { k: "ja", n: "日本語" }, { k: "ko", n: "한국어" }, { k: "zh", n: "中文" }
-    ]
-
     PageScroll {
         anchors.fill: parent
 
@@ -77,32 +70,11 @@ Item {
             onChosen: function(x) { page.set("week", x) }
         }
 
-        SectionTitle { text: I18n.t("Language"); sub: I18n.t("The shell speaks English for now. Your choice is kept, so the shell can switch when a translation arrives.") }
-        Rectangle {
-            width: parent.width; height: lflow.implicitHeight + 28; radius: M3.rL; color: M3.surfaceC
-            Grid {
-                id: lflow
-                x: 14; y: 14; width: parent.width - 28
-                columns: Math.max(3, Math.floor(width / 150))
-                spacing: 6
-                Repeater {
-                    model: page.langs
-                    delegate: Rectangle {
-                        readonly property bool on: page.rg.lang === modelData.k
-                        width: (lflow.width - (lflow.columns - 1) * 6) / lflow.columns; height: 40
-                        radius: on ? 20 : M3.rS
-                        color: on ? M3.primary : (lm.containsMouse ? M3.surfaceHighest : M3.surfaceHigh)
-                        Behavior on radius { NumberAnimation { duration: M3.d(220); easing.type: M3.springy; easing.overshoot: 1.6 * Prefs.bounce } }
-                        Behavior on color { ColorAnimation { duration: 140 } }
-                        Row {
-                            anchors.centerIn: parent; spacing: 6
-                            Icon { visible: parent.parent.on; name: "check"; glyph: ""; size: 15; color: M3.inkPrimary; anchors.verticalCenter: parent.verticalCenter }
-                            T { text: modelData.n; font.pixelSize: 13; color: parent.parent.on ? M3.inkPrimary : M3.ink; anchors.verticalCenter: parent.verticalCenter }
-                        }
-                        MouseArea { id: lm; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: page.set("lang", modelData.k) }
-                    }
-                }
-            }
+        SettingRow {
+            label: I18n.t("Language")
+            desc: I18n.t("Change the language of Settings and the shell")
+            reserved: 120
+            Btn { anchors.right: parent.right; anchors.rightMargin: 14; anchors.verticalCenter: parent.verticalCenter; text: I18n.t("Open"); onClicked: page.ctl.page = 31 }
         }
     }
 }

@@ -17,7 +17,7 @@ Item {
         fxRefresh.restart()
     }
     function setGaming(on) { const n = JSON.parse(JSON.stringify(fx)); n.gaming = on; fx = n; fxRun(["gaming", on ? "on" : "off"], "Gaming mode " + (on ? "on" : "off")) }
-    function setLite(on) { const n = JSON.parse(JSON.stringify(fx)); n.lite = on; fx = n; fxRun(["lite", on ? "on" : "off"], on ? "Light mode on" : "Light mode off") }
+    function setLite(on) { page.ctl.setLightMode(on) }
     function setOpt(k, on) { const n = JSON.parse(JSON.stringify(fx)); if (!n.opts) n.opts = {}; n.opts[k] = on; fx = n; fxRun(["set", k, on ? "on" : "off"], "Gaming mode: saved") }
     Process {
         id: fxProc
@@ -35,12 +35,30 @@ Item {
         id: ppProc
         command: ["bash", "-c", "command -v powerprofilesctl >/dev/null && powerprofilesctl get 2>/dev/null"]
         running: true
-        stdout: StdioCollector { onStreamFinished: { const t = text.trim(); page.havePP = t.length > 0; page.profile = t } }
+        stdout: StdioCollector { onStreamFinished: {
+            const t = text.trim(); page.havePP = t.length > 0; page.profile = t
+            if (profileSet.checkPending) {
+                page.ctl.status = t === profileSet.wanted ? I18n.t("Saved") : I18n.t("The power mode did not change (power-profiles-daemon said no)")
+                profileSet.checkPending = false
+            }
+        } }
+    }
+    Connections { target: page.ctl; function onPageChanged() { if (page.ctl.page === 16 && !ppProc.running && !profileSet.running) ppProc.running = true } }
+    Process {
+        id: profileSet
+        property string wanted: ""
+        property bool checkPending: false
+        command: [page.ctl.home + "/.local/bin/rice-services", "profile", wanted]
+        onExited: function(code) {
+            if (code !== 0) page.ctl.status = I18n.t("The power mode did not change (power-profiles-daemon said no)")
+            profileSet.checkPending = true
+            if (!ppProc.running) ppProc.running = true
+        }
     }
     function setProfile(p) {
-        profile = p
-        Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-services\" profile \"$1\"", "_", p])
-        page.ctl.status = I18n.t("Power mode: ") + p
+        if (profileSet.running) return
+        profileSet.wanted = p
+        profileSet.running = true
     }
 
     // ---------- your launchers and tools ----------
@@ -156,7 +174,7 @@ Item {
         }
 
         SectionTitle { text: I18n.t("Performance"); sub: I18n.t("For laptops and older computers, also when you are not playing.") }
-        ToggleRow { label: I18n.t("Light mode"); desc: I18n.t("The visualizer stops and widgets rest while a window covers them"); checked: page.fx.lite === true; onToggled: function(v) { page.setLite(v) } }
+        ToggleRow { label: I18n.t("Light mode"); desc: I18n.t("The visualizer stops and widgets rest while a window covers them"); checked: page.ctl.lightMode; onToggled: function(v) { page.setLite(v) } }
         SegRow {
             visible: page.havePP
             label: I18n.t("Power mode")

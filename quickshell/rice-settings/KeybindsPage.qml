@@ -4,7 +4,7 @@ import QtQuick
 
 // Settings > System > Keybinds: every key worth knowing, in groups, for the window manager that runs (Hyprland
 // or niri). Type to find one. The pencil next to a key gives the action other keys (rice-keymap; niri too);
-// keys for any other app or command are made on the Hyprland / niri page (Custom keybinds).
+// keys for any other app or command can also be made here.
 Item {
     id: page
     property var ctl
@@ -268,7 +268,7 @@ Item {
         }
         // your own keys for any app or command, right here (they were hidden in Windows > Keybinds)
         Item { width: parent.width; height: 8 }
-        BindsPage { width: parent.width; ctl: page.ctl; showActive: false }
+        BindsPage { width: parent.width; ctl: page.ctl; showActive: true }
     }
 
     // ---------- change the keys of one action ----------
