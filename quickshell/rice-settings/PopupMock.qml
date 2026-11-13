@@ -1,6 +1,6 @@
 import QtQuick
 
-// A small fake notification popup that mirrors the swaync popup styles (see bin/rice-notify).
+// A small notification popup preview.
 Item {
     id: m
     property string look: "glass"          // glass | solid | google | outline | minimal | pill | accent | glow | island | light

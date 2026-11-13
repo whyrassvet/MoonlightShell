@@ -29,20 +29,6 @@ Item {
     }
     Timer { id: refresh; interval: 800; onTriggered: stateProc.running = true }
 
-    // who shows notifications: the shell itself (pop-ups + the control center) or swaync (rice-cc engine)
-    property string engine: "swaync"
-    Process {
-        id: engProc
-        command: ["bash", "-c", "\"$HOME/.local/bin/rice-cc\" engine state"]
-        running: true
-        stdout: StdioCollector { onStreamFinished: page.engine = text.trim() === "shell" ? "shell" : "swaync" }
-    }
-    function setEngine(v) {
-        engine = v
-        Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-cc\" engine \"$1\"", "_", v])
-        page.ctl.status = v === "shell" ? I18n.t("Notifications: the shell shows them") : I18n.t("Notifications: swaync shows them")
-    }
-
     // the themes, the same colors the shell uses (rice-desktop/NPal.qml)
     readonly property var themes: [
         { k: "shell", n: "DarkShadow", d: "Your theme color, softly" },
@@ -109,14 +95,6 @@ Item {
 
     PageScroll {
         anchors.fill: parent
-
-        SegRow {
-            label: I18n.t("Shown by")
-            desc: page.engine === "shell" ? I18n.t("DarkShadow: its own pop-ups and the control center (SUPER + N)") : I18n.t("swaync: its pop-ups and its panel")
-            options: [{ label: I18n.t("DarkShadow"), value: "shell" }, { label: "swaync", value: "swaync" }]
-            current: page.engine
-            onChosen: function(x) { page.setEngine(x) }
-        }
 
         // ---------- live sample: a little screen with the pop-up where it will be ----------
         Rectangle {
@@ -250,15 +228,6 @@ Item {
             onToggled: function(x) { page.setv("blur", x ? "on" : "off") }
         }
 
-        // ---------- swaync only ----------
-        SectionTitle { visible: page.engine === "swaync"; text: "swaync"; sub: I18n.t("Only while swaync shows your notifications.") }
-        ToggleRow {
-            visible: page.engine === "swaync"
-            label: I18n.t("Keep notifications when clicked")
-            desc: I18n.t("Clicking opens the app and the notification stays in swaync's panel")
-            checked: page.v("keep_clicked", true)
-            onToggled: function(x) { page.setv("keep_clicked", x ? "on" : "off") }
-        }
         T { kind: "reading"; width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 11; color: M3.inkDim; topPadding: 6
             text: I18n.t("The sound for new notifications is in Sound & language > Sfx & sounds.") }
     }

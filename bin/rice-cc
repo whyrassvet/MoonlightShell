@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """rice-cc: the control center of DarkShadow's Shell (switches, sliders, music and notifications).
   rice-cc [toggle|open|close]        show or hide it (the bell on the bar, SUPER + N)
-  rice-cc engine shell|swaync|state  who shows notifications: the shell itself (pop-ups and the list in the
-                                     control center) or swaync (as before)
-  rice-cc dnd on|off|toggle|state    Do Not Disturb (for either engine)
-  rice-cc migrate                    installer (V3.24): the shell shows notifications, once; swaync stays one
-                                     click away in Settings > Notifications > Shown by
+  rice-cc dnd on|off|toggle|state    Do Not Disturb
+  rice-cc migrate                    select the built-in notification server
 ~/.config/rice/cc.json"""
 import json
 import os
@@ -24,8 +21,7 @@ def load():
         j = json.load(open(CFG))
     except Exception:
         j = {}
-    return {"engine": j.get("engine") if j.get("engine") in ("shell", "swaync") else "swaync", "dnd": j.get("dnd") is True,
-            "shellOnce": j.get("shellOnce") is True}
+    return {"engine": "shell", "dnd": j.get("dnd") is True, "shellOnce": True}
 
 
 def save(c):
@@ -42,37 +38,8 @@ def quiet(cmd, t=4):
         return ""
 
 
-def swaync_running():
-    return quiet(["pgrep", "-f", "(^|/)\\.?swaync(-wrapped)?( |$)"]) != ""
-
-
-def engine(v):
-    c = load()
-    if v == "state":
-        print(c["engine"])
-        return
-    c["engine"] = v
-    save(c)
-    if v == "shell":
-        # swaync lets go of the notification name; the shell takes it a moment later
-        quiet(["pkill", "-x", "swaync"])
-        quiet(["pkill", "-x", ".swaync-wrapped"])
-        print("Notifications: shown by the shell")
-    else:
-        time.sleep(1.2)             # the shell lets go first
-        if shutil.which("swaync") and not swaync_running():
-            subprocess.Popen(["swaync"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        print("Notifications: shown by swaync")
-
-
 def dnd(v):
     c = load()
-    if c["engine"] == "swaync" and shutil.which("swaync-client"):
-        if v == "state":
-            print("on" if quiet(["swaync-client", "-D", "-sw"]) == "true" else "off")
-        else:
-            quiet(["swaync-client", {"on": "-dn", "off": "-df"}.get(v, "-d"), "-sw"])
-        return
     if v == "state":
         print("on" if c["dnd"] else "off")
         return
@@ -88,14 +55,8 @@ def main(a):
         open(CACHE + "/cc-open", "w").write("%.4f %s\n" % (time.time(), cmd))
         if quiet(["pgrep", "-f", "quickshell/rice-desktop"]) == "":
             subprocess.Popen([HOME + "/.local/bin/rice-desktop", "ensure"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    elif cmd == "engine" and len(a) == 3 and a[2] in ("shell", "swaync", "state"):
-        engine(a[2])
     elif cmd == "migrate":
-        c = load()
-        if not c["shellOnce"]:
-            c["shellOnce"] = True
-            save(c)
-            engine("shell")
+        save(load())
     elif cmd == "dnd" and len(a) == 3 and a[2] in ("on", "off", "toggle", "state"):
         dnd(a[2])
     else:

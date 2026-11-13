@@ -166,7 +166,7 @@ Item {
         ToggleRow { label: I18n.t("Workspaces"); desc: I18n.t("Which workspace you switched to, in your workspace style and its own color")
             enabled: page.v("island_dynamic", true) !== false; opacity: enabled ? 1 : 0.45
             checked: page.v("island_ws", true) !== false; onToggled: function(x) { page.setv("island_ws", x ? "on" : "off") } }
-        ToggleRow { label: I18n.t("Notifications"); desc: I18n.t("They grow out of the island instead of popping up (urgent ones still pop up). Needs Shown by: DarkShadow")
+        ToggleRow { label: I18n.t("Notifications"); desc: I18n.t("They grow out of the island instead of popping up (urgent ones still pop up).")
             enabled: page.v("island_dynamic", true) !== false; opacity: enabled ? 1 : 0.45
             checked: page.v("island_notifs", true) !== false; onToggled: function(x) { page.setv("island_notifs", x ? "on" : "off") } }
         ToggleRow { label: I18n.t("Charger"); desc: I18n.t("Plugging the charger in or out shows the battery as a wave (laptops)")

@@ -3,12 +3,12 @@ import Quickshell.Io
 import Quickshell.Wayland
 import QtQuick
 
-// Notifications shown by the shell itself (rice-cc engine shell): the server, the pop-ups and the list the
+// Notifications shown by the shell: the server, the pop-ups and the list the
 // control center shows. Their look follows Settings > Notifications (~/.config/rice/notify.json): theme,
-// transparency, blur, place, width, how long they stay, corners and text size. With swaync all of this sleeps.
+// transparency, blur, place, width, how long they stay, corners and text size.
 Scope {
     id: nfy
-    property bool shellMode: false
+    readonly property bool shellMode: true
     property bool islandVolume: false
     property bool dnd: false
     readonly property var list: srvLoader.item ? srvLoader.item.trackedNotifications.values : []
@@ -41,7 +41,6 @@ Scope {
         onContent: function(t) {
             let j = {}
             try { j = t.trim() !== "" ? JSON.parse(t) : {} } catch (e) { j = {} }
-            nfy.shellMode = j.engine === "shell"
             nfy.dnd = j.dnd === true
         }
     }
@@ -50,10 +49,10 @@ Scope {
         every: 4000
         onContent: function(t) { try { nfy.ns = t.trim() !== "" ? JSON.parse(t) : {} } catch (e) { } }
     }
-    // the server starts a moment after the switch, so swaync has let go of the notification name
+    // Allow other notification servers to release the D-Bus name before starting.
     property bool srvOn: false
-    onShellModeChanged: { if (!shellMode) srvOn = false; else srvT.restart() }
-    Timer { id: srvT; interval: 1500; onTriggered: if (nfy.shellMode && !clearOthers.running) clearOthers.running = true }
+    Component.onCompleted: srvT.restart()
+    Timer { id: srvT; interval: 1500; onTriggered: if (!clearOthers.running) clearOthers.running = true }
     // Another notification daemon may own the name first: mako, dunst or swaync start by themselves when a program
     // sends a notification before the shell is up (D-Bus starts them), most of all on niri. Then notifications came
     // as plain blue boxes. Those are closed before the shell takes the name, and taken back if one shows up later.
@@ -97,7 +96,7 @@ Scope {
         if (nfy.dnd && !urgent(n)) return
         nfy.showed(n)
         if (islandTakes && !urgent(n)) {
-            Quickshell.execDetached(["bash", "-c", "SWAYNC_APP_NAME=\"$1\" \"$HOME/.local/bin/rice-sound\" notify", "_", n.appName || ""])
+            Quickshell.execDetached(["bash", "-c", "RICE_NOTIFICATION_APP=\"$1\" \"$HOME/.local/bin/rice-sound\" notify", "_", n.appName || ""])
             return
         }
         const e = { key: ++nfy.seq, n: n }
@@ -105,7 +104,7 @@ Scope {
         pops = p
         if (p.length > 4) leave(p[p.length - 1].key)
         try { n.closed.connect(function() { nfy.leave(e.key) }) } catch (x) { }
-        Quickshell.execDetached(["bash", "-c", "SWAYNC_APP_NAME=\"$1\" \"$HOME/.local/bin/rice-sound\" notify", "_", n.appName || ""])
+        Quickshell.execDetached(["bash", "-c", "RICE_NOTIFICATION_APP=\"$1\" \"$HOME/.local/bin/rice-sound\" notify", "_", n.appName || ""])
     }
     function find(key) { for (let i = 0; i < pops.length; i++) if (pops[i].key === key) return pops[i]; return null }
     // a pop-up first plays its way out, then leaves the list (and only then is the notification let go)

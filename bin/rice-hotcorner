@@ -216,23 +216,11 @@ def bt_on():
     return code == 0 and re.search(r"Powered:\s*yes", out) is not None
 
 
-def shell_notify():
-    """the shell shows notifications itself (rice-cc engine shell): Do Not Disturb lives in cc.json, swaync is
-    not asked at all (swaync-client without -sw waits for swaync forever when it is not running)"""
+def dnd_on():
     try:
-        return json.load(open(os.path.expanduser("~/.config/rice/cc.json"))).get("engine") == "shell"
+        return json.load(open(os.path.expanduser("~/.config/rice/cc.json"))).get("dnd") is True
     except Exception:
         return False
-
-
-def dnd_on():
-    if shell_notify():
-        try:
-            return json.load(open(os.path.expanduser("~/.config/rice/cc.json"))).get("dnd") is True
-        except Exception:
-            return False
-    code, out = q(["swaync-client", "-D", "-sw"], timeout=2)
-    return code == 0 and out.strip() == "true"
 
 
 def gaming_on():
@@ -270,7 +258,7 @@ def state():
         except Exception:
             rec = {"start": time.time()}
     tools = {t: shutil.which(t) is not None for t in
-             ("wf-recorder", "gpu-screen-recorder", "grim", "slurp", "wl-copy", "nmcli", "bluetoothctl", "wpctl", "swaync-client")}
+             ("wf-recorder", "gpu-screen-recorder", "grim", "slurp", "wl-copy", "nmcli", "bluetoothctl", "wpctl")}
     wl = walls()
     schemes, scheme = [], ""
     if "colors" in load().get("sections", []):
@@ -654,7 +642,7 @@ def main(argv):
         toggle_awake()
     elif cmd == "dnd":
         cc = os.path.expanduser("~/.local/bin/rice-cc")
-        q([cc, "dnd", "toggle"] if os.access(cc, os.X_OK) else ["swaync-client", "-d", "-sw"])
+        q([cc, "dnd", "toggle"])
     elif cmd == "wifi":
         q(["nmcli", "radio", "wifi", "off" if wifi_on() else "on"], timeout=8)
     elif cmd == "bluetooth":

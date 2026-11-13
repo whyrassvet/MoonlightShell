@@ -2,8 +2,7 @@ import Quickshell
 import Quickshell.Services.Notifications
 import QtQuick
 
-// The notification server of the shell (only while Settings > Notifications says the shell shows them; swaync is
-// stopped then). Every notification is kept until you dismiss it in the control center.
+// The shell's notification server. Notifications are kept until dismissed in the control center.
 NotificationServer {
     id: srv
     signal arrived(var n)

@@ -206,7 +206,7 @@ detach() { setsid -f "$@" >/dev/null 2>&1 </dev/null || true; }
 config_dirs() { local d; for d in "$ROOT"/config/*/; do [ -d "$d" ] && basename "$d"; done; }
 pretty_dir() {
   case "$1" in
-    hypr) echo "Hyprland" ;; swaync) echo "Notifications (swaync)" ;;
+    hypr) echo "Hyprland" ;;
     rofi) echo "Rofi" ;; matugen) echo "Matugen colors" ;; kitty) echo "Kitty terminal" ;;
     fastfetch) echo "Fastfetch" ;; btop) echo "btop theme (transparent)" ;; fish) echo "Fish shell" ;; *) echo "$1" ;;
   esac
@@ -776,13 +776,6 @@ migrate_theme_colors() {
     else
       warn "Custom matugen Waybar template was not changed; configure rice/colors.css manually."
     fi
-    rm -f "$tmp"
-  fi
-  local style="$HOME/.config/swaync/style.css"
-  if [ -f "$style" ] && grep -Fq '../../.config/waybar/colors.css' "$style"; then
-    tmp="$(mktemp)"
-    sed "s|../../.config/waybar/colors.css|../rice/colors.css|g" "$style" >"$tmp"
-    put "$tmp" "$style" || { rm -f "$tmp"; return 1; }
     rm -f "$tmp"
   fi
 }

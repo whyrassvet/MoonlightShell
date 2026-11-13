@@ -78,7 +78,7 @@ def migrate_main(path):
     n = s
     if "rice-bar start" not in n:
         n = re.sub(r'hl\.exec_cmd\(\s*"waybar"\s*\)', 'hl.exec_cmd("$HOME/.local/bin/rice-bar start")', n)
-    # V3.24: swaync starts through rice-notifyd, which leaves it off when the shell shows notifications itself
+    # Migrate the old notification daemon startup to the shell's D-Bus launcher.
     if "rice-notifyd" not in n:
         n = re.sub(r'hl\.exec_cmd\(\s*"swaync"\s*\)', 'hl.exec_cmd("$HOME/.local/bin/rice-notifyd")', n)
     if "rice-launch" not in n:

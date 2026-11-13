@@ -119,7 +119,7 @@ Item {
             Repeater {
                 model: [
                     { n: "Hyprland", u: "https://hypr.land" }, { n: "niri", u: "https://github.com/niri-wm/niri" }, { n: "Quickshell", u: "https://quickshell.org" },
-                    { n: "Qt", u: "https://www.qt.io" }, { n: "swaync", u: "https://github.com/ErikReider/SwayNotificationCenter" },
+                    { n: "Qt", u: "https://www.qt.io" },
                     { n: "matugen", u: "https://github.com/InioX/matugen" }, { n: "cava", u: "https://github.com/karlstav/cava" },
                     { n: "awww", u: "https://codeberg.org/LGFae/awww" },
                     { n: "Sarods2D: hyprland-infinite-desktop-v2", u: "https://github.com/sarodscommits/hyprland-infinitie-desktop-v2" },

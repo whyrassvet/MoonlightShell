@@ -3,7 +3,7 @@
 
   rice-sound list              sounds you can pick
   rice-sound play [NAME]       play NAME (or the chosen one) now, e.g. to preview it
-  rice-sound notify            called by swaync for every new notification
+  rice-sound notify            called by the shell for every new notification
 """
 import json
 import os
@@ -62,49 +62,20 @@ def play(name, vol):
 
 
 def dnd():
-    # the shell shows notifications itself (rice-cc engine shell): its own Do Not Disturb, and no swaync-client
-    # call (that would start swaync again through D-Bus)
     try:
         cc = json.load(open(HOME + "/.config/rice/cc.json"))
-        if cc.get("engine") == "shell":
-            return cc.get("dnd") is True
-    except Exception:
-        pass
-    if not shutil.which("swaync-client"):
-        return False
-    try:
-        r = subprocess.run(["swaync-client", "-D", "-sw"], capture_output=True, text=True, timeout=1.5)
-        return r.stdout.strip() == "true"
+        return cc.get("dnd") is True
     except Exception:
         return False
-
-
-def let_go():
-    """close swaync's pipe before anything else (swaync 0.12 crashes if it stays open after we end)"""
-    try:
-        fd = os.open(os.devnull, os.O_RDWR)
-        for n in (0, 1, 2):
-            os.dup2(fd, n)
-        if fd > 2:
-            os.close(fd)
-    except OSError:
-        pass
 
 
 def notify():
-    let_go()
-    # return to swaync at once, decide in the background
-    if os.fork() > 0:
-        return
-    os.setsid()
     name, vol = conf()
     if name not in SOUNDS or vol <= 0:
         return
-    app = os.environ.get("SWAYNC_APP_NAME", "").strip().lower()
+    app = os.environ.get("RICE_NOTIFICATION_APP", "").strip().lower()
     if app in QUIET_APPS:
         return
-    if os.environ.get("SWAYNC_REPLACES_ID", "0") not in ("", "0"):
-        return  # an update of a notification already shown (progress, volume, ...)
     if dnd():
         return
     # one sound for a burst of notifications

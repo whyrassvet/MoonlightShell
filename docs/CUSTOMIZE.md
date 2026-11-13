@@ -28,13 +28,10 @@ rice-colors list             # all schemes
 rice-colors mode ocean       # auto, grey, navy, mono, slate, stone, steel, ash, ink, ocean, sky, ...
 ```
 
-## Notifications (swaync)
+## Notifications
 ```bash
 rice-notify set pos_x left|center|right
-rice-notify set layout controls-top|controls-bottom|minimal
-rice-notify set style glass|solid|outline
 rice-notify test             # send a test notification
-rice-notify restore          # give back your original swaync files
 ```
 
 ## Idle & Lockscreen (hypridle + hyprlock)

@@ -88,7 +88,7 @@ PanelWindow {
             "echo \"fx $(\"$HOME/.local/bin/rice-effects\" state 2>/dev/null | tr -d '\\n')\"",
             "echo \"mic $(wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null)\"",
             "echo \"dnd $(\"$HOME/.local/bin/rice-cc\" dnd state 2>/dev/null)\"",
-            "grep -q '\"engine\": *\"shell\"' \"$HOME/.config/rice/cc.json\" 2>/dev/null || { command -v swaync-client >/dev/null && echo \"nc $(timeout 2 swaync-client -c -sw 2>/dev/null)\"; }",
+            "echo \"nc $(cat \"$HOME/.cache/rice/notif-count\" 2>/dev/null)\"",
             "echo \"fpson $(\"$HOME/.local/bin/rice-fps\" state 2>/dev/null)\"",
             "command -v brightnessctl >/dev/null && echo \"br $(brightnessctl -m 2>/dev/null | cut -d, -f4 | tr -d %)\""
         ].join("; ")]

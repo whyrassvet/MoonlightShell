@@ -26,7 +26,7 @@ Item {
         { k: "mic", n: "Microphone", g: "\uf130", need: "wpctl", offText: "Muted" },
         { k: "network", n: "Networking", g: "\uf0e8", need: "nmcli" },
         { k: "airplane", n: "Airplane mode", g: "\uf072", need: "nmcli" },
-        { k: "dnd", n: "Do Not Disturb", g: "\uf1f6", need: "swaync-client" },
+        { k: "dnd", n: "Do Not Disturb", g: "\uf1f6", need: "" },
         { k: "awake", n: "Keep awake", g: "\uf0f4", need: "" },
         { k: "nightlight", n: "Night light", g: "\uf186", need: "hyprsunset" }
     ]

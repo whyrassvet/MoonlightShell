@@ -481,22 +481,6 @@ PanelWindow {
                         MIcon { anchors.centerIn: parent; size: 24; name: "notifications_paused"; glyph: ""; color: cc.dim } }
                     Text { anchors.horizontalCenter: parent.horizontalCenter; text: Tr.t("All caught up"); color: cc.dim; font.family: Fonts.main; font.pixelSize: 13 }
                 }
-                // swaync shows them
-                Rectangle {
-                    visible: !(cc.nf && cc.nf.shellMode)
-                    width: parent.width; height: 120; radius: 22; color: cc.card
-                    Column {
-                        x: 16; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 32; spacing: 8
-                        Text { width: parent.width; wrapMode: Text.WordWrap; text: Tr.t("swaync shows your notifications now. Let the shell show them here, with its own pop-ups?"); color: cc.dim; font.family: Fonts.main; font.pixelSize: 12 }
-                        Row { spacing: 8
-                            Rectangle { width: u1.implicitWidth + 28; height: 36; radius: 18; color: cc.primary
-                                Text { id: u1; anchors.centerIn: parent; text: Tr.t("Use the shell"); color: cc.inkPrimary; font.family: Fonts.main; font.pixelSize: 13; font.weight: Font.Medium }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: cc.bin(["rice-cc", "engine", "shell"]) } }
-                            Rectangle { width: u2.implicitWidth + 28; height: 36; radius: 18; color: cc.cardHi
-                                Text { id: u2; anchors.centerIn: parent; text: Tr.t("Open swaync"); color: cc.fg; font.family: Fonts.main; font.pixelSize: 13 }
-                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { cc.open = false; cc.sh("swaync-client -t -sw") } } } }
-                    }
-                }
             }
 
             // ================= Overview =================

@@ -12,7 +12,7 @@
 "Flat" (no blur, no transparency) is on when Lite is on, or when gaming mode is on and
 "Keep blur & transparency" is off. It reaches:
   Hyprland (blur off, every window opaque), kitty (background_opacity 1), the launcher,
-  notifications (swaync), the dashboard, the hot corner, the dock and the desktop widgets.
+  notifications, the dashboard, the hot corner, the dock and the desktop widgets.
 Gaming mode also turns off animations, shadows and gaps (unless you keep them), can turn on
 Do Not Disturb, and stops the dashboard from opening at the bottom edge.
 Undo: rice-effects lite off; rice-effects gaming off.
@@ -214,14 +214,13 @@ def apply(c, reload_hypr=True, quiet=False):
 
 
 def set_dnd(on):
-    # rice-cc knows who shows notifications (the shell or swaync)
     cc = os.path.expanduser("~/.local/bin/rice-cc")
     if on:
-        q([cc, "dnd", "on"] if os.access(cc, os.X_OK) else ["swaync-client", "-dn", "-sw"])
+        q([cc, "dnd", "on"])
         open(DND_BY_US, "w").write("1\n")
     elif os.path.exists(DND_BY_US):
         os.remove(DND_BY_US)
-        q([cc, "dnd", "off"] if os.access(cc, os.X_OK) else ["swaync-client", "-df", "-sw"])
+        q([cc, "dnd", "off"])
 
 
 def main(argv):
