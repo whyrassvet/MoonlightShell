@@ -31,6 +31,8 @@ FloatingWindow {
     }
     Timer { id: unpin; interval: 1200; onTriggered: win.pin = false }
     Timer { interval: 600; running: true; onTriggered: win.applySize() }
+    // Start the lightweight sound client after the window opens; audio initializes in its child process.
+    Timer { interval: 100; running: true; onTriggered: { const ready = Sfx.loaded } }
     Timer { id: sizeSoon; interval: 120; onTriggered: win.applySize() }
     Connections { target: Prefs; function onSizeChanged() { sizeSoon.restart() } }
     color: "transparent"

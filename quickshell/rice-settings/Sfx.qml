@@ -4,7 +4,7 @@ import Quickshell.Io
 import QtQuick
 
 // Interface sounds (Settings > Sfx & sounds). Sfx.play("click") anywhere in this shell.
-// Plays with QtMultimedia when it is installed (instant), else with pw-play / paplay.
+// QtMultimedia runs in a separate process so its initialization cannot block Settings.
 // Only Moonlight Shell's own parts use it, never other apps.
 Singleton {
     id: sfx
@@ -15,7 +15,8 @@ Singleton {
     property string pack: "tap"
     property var opt: ({ click: true, "switch": true, slider: true, typing: true, music: true })
     readonly property string dir: Quickshell.env("HOME") + "/.local/share/rice/sounds/sfx/"
-    property var bank: null
+    property var soundSocket: null
+    readonly property string socketPath: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/moonlight-settings-sfx-" + Date.now() + "-" + Math.floor(Math.random() * 1000000000)
     property var lastAt: ({})
     readonly property var kinds: ({ click: "click", select: "click", done: "click", "switch-on": "switch", "switch-off": "switch",
                                     slide: "slider", type: "typing" })
@@ -34,7 +35,11 @@ Singleton {
         const now = Date.now(), g = gaps[ev] || 0
         if (g > 0 && lastAt[ev] && now - lastAt[ev] < g) return
         lastAt[ev] = now
-        if (bank && !outside && bank.play(ev)) return
+        if (soundSocket && soundSocket.connected && !outside && ev.indexOf("intro/") !== 0) {
+            soundSocket.write(JSON.stringify({ event: ev, pack: pack, volume: volume }) + "\n")
+            soundSocket.flush()
+            return
+        }
         const v = (volume / 100).toFixed(2)
         Quickshell.execDetached(["bash", "-c",
             "f=\"$1\"; v=\"$2\"; [ -f \"$f\" ] || exit 0; if command -v pw-play >/dev/null; then exec pw-play --media-role Event --volume \"$v\" \"$f\"; " +
@@ -66,9 +71,20 @@ Singleton {
     }
     Timer { interval: 1500; running: true; repeat: true; onTriggered: sfx.reload() }
 
-    Component.onCompleted: {
-        // QtMultimedia is optional: without it the sounds still play (a little later) through pw-play
-        const c = Qt.createComponent("SfxBank.qml")
-        if (c.status === Component.Ready) bank = c.createObject(sfx, { sfx: sfx })
+    SocketServer {
+        path: sfx.socketPath
+        active: true
+        handler: Socket {
+            id: connection
+            onConnectedChanged: {
+                if (connected) sfx.soundSocket = connection
+                else if (sfx.soundSocket === connection) sfx.soundSocket = null
+            }
+        }
+    }
+    Process {
+        command: ["quickshell", "-p", Quickshell.shellPath("SfxWorker.qml")]
+        environment: ({ MOONLIGHT_SFX_SOCKET: sfx.socketPath })
+        running: true
     }
 }
