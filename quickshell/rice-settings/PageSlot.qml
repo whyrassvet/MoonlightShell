@@ -9,6 +9,7 @@ Item {
     property int cur: 0
     property var nav: null            // the window: navX / navY tell the direction
     readonly property bool on: idx === cur
+    readonly property bool asyncPage: idx === 16 || idx === 17
     default property alias content: inner.data
     // the page itself, made when you first go there or a moment after the window opened (one after another), so
     // Settings opens fast: making every page at once (and starting all their helpers) took seconds on a laptop
@@ -19,7 +20,8 @@ Item {
     property bool seen: false
 
     width: parent ? parent.width : 0
-    height: parent ? parent.height : 0
+    y: idx === 0 || idx === 16 ? 0 : 44
+    height: parent ? parent.height - y : 0
     visible: inner.opacity > 0.01
     enabled: on
     z: on ? 1 : 0
@@ -67,7 +69,7 @@ Item {
         Loader {
             anchors.fill: parent
             active: slot.page !== null && (slot.on || slot.seen || slot.warm)
-            asynchronous: !slot.on
+            asynchronous: slot.asyncPage || !slot.on
             sourceComponent: slot.page
             onLoaded: if (slot.nav && slot.nav.pageLoaded) slot.nav.pageLoaded()
         }

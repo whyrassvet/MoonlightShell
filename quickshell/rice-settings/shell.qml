@@ -223,7 +223,7 @@ FloatingWindow {
         return "\uf17c"
     }
     readonly property string userName: Quickshell.env("USER")
-    readonly property int railW: 92
+    readonly property int railW: 112
     // rice-effects: blur and transparency are off right now
     property bool flat: false
     Process {
@@ -348,16 +348,11 @@ FloatingWindow {
     readonly property var navTree: [
         { page: 0 },
         { sep: true },
-        { group: "wall", name: "Wallpaper", icon: "\uf03e", sym: "wallpaper", pages: [18], caption: I18n.t("Wallpaper and the colors it gives") },
-        { group: "look", name: "Appearance", icon: "\udb80\udfd8", sym: "palette", pages: [34, 8, 21, 19, 24, 22, 9, 14], caption: I18n.t("Themes, colors, fonts, shapes, components, cursors and the dock") },
-        { group: "motion", name: "Motion", icon: "\uf1e6", sym: "animation", pages: [20], caption: I18n.t("How windows and Settings move") },
-        { group: "desk", name: "Desktop", icon: "\uf108", sym: "desktop_windows", pages: niri ? [29, 12, 25, 4, 11] : [29, 33, 12, 25, 4, 11], caption: I18n.t("Look & feel, widgets, windows, %1 and the lock screen", wmLabel) },
-        { group: "bar", name: "Bar & launcher", icon: "\uf0c9", sym: "toolbar", pages: [2, 3, 6, 7], caption: I18n.t("The bar, the dynamic island and the launcher") },
-        { group: "snd", name: "Sound & language", icon: "\uf028", sym: "graphic_eq", pages: [1, 10, 26], caption: I18n.t("Sounds, notifications, language and region") },
-        { group: "sys", name: "System", icon: "\uf013", sym: "settings", pages: [30, 31, 28, 5, 23, 15], caption: I18n.t("Keybinds, languages, monitors, recording, keyboard and services") },
+        { group: "look", name: "Appearance", icon: "\udb80\udfd8", sym: "palette", pages: [34, 18, 8, 21, 19, 24, 22, 9, 20], caption: I18n.t("Appearance") },
+        { group: "desk", name: "Desktop", icon: "\uf108", sym: "desktop_windows", pages: niri ? [29, 12, 25, 4, 11, 14, 2, 3, 6, 7, 10] : [29, 33, 12, 25, 4, 11, 14, 2, 3, 6, 7, 10], caption: I18n.t("Desktop") },
+        { group: "sys", name: "System", icon: "\uf013", sym: "settings", pages: [1, 26, 30, 31, 28, 5, 23, 15], caption: I18n.t("System") },
         { group: "game", name: "Gaming", icon: "\uf11b", sym: "sports_esports", pages: [16], caption: I18n.t("Play without distractions") },
-        { group: "about", name: "About", icon: "\uf05a", sym: "info", pages: [17], caption: I18n.t("Version, system and credits") },
-        { group: "upd", name: "Update Center", icon: "\uf021", sym: "system_update_alt", pages: [35], caption: I18n.t("Get the newest version, right here") }
+        { group: "about", name: "About", icon: "\uf05a", sym: "info", pages: [17, 35], caption: I18n.t("Version, system and credits") }
     ]
     // the navigation rail: Home, then one stop per group (Gaming hub and About are groups with one page)
     readonly property var rail: [{ gid: "", name: "Home", icon: "\uf015", sym: "home", pages: [0], caption: I18n.t("Your desktop at a glance") }]
@@ -433,7 +428,7 @@ FloatingWindow {
         return { ys: ys, hs: hs, vis: vis, gbg: gbg, total: y }
     }
     // where the next page comes from (Material 3 shared axis): tabs of one group slide sideways,
-    // another group comes up or down like the rail
+    // another group enters from above
     property int prevPage: 0
     property int navX: 0
     property int navY: 0
@@ -442,7 +437,7 @@ FloatingWindow {
         if (ra === rb) {
             const l = rail[ra].pages
             navX = l.indexOf(b) >= l.indexOf(a) ? 1 : -1; navY = 0
-        } else { navX = 0; navY = rb >= ra ? 1 : -1 }
+        } else { navX = 0; navY = -1 }
     }
     onPageChanged: { navFrom(prevPage, page); prevPage = page; openFor(page); const n = Object.assign({}, lastIn); n[railOf(page)] = page; lastIn = n }
     Component.onCompleted: openFor(page)
@@ -681,7 +676,7 @@ FloatingWindow {
                             width: parent.width - 8
                             horizontalAlignment: Text.AlignHCenter
                             elide: Text.ElideRight
-                            text: I18n.lang === "en" && modelData.name === "Bar & launcher" ? I18n.t("Bar") : I18n.t(modelData.name)
+                            text: I18n.t(modelData.name)
                             font.pixelSize: 11
                             font.weight: ri.on ? Font.DemiBold : Font.Medium
                             color: ri.on ? M3.ink : M3.inkDim
@@ -793,6 +788,30 @@ FloatingWindow {
             y: 84
             width: parent.width - x - 20
             height: visible ? 46 : 0
+            Flickable {
+                id: tabFlick
+                anchors.fill: parent
+                clip: true
+                contentWidth: tabRow.width + 12
+                contentHeight: height
+                boundsBehavior: Flickable.StopAtBounds
+                flickableDirection: Flickable.HorizontalFlick
+                function revealCurrent() {
+                    const k = tabs.list.indexOf(win.page)
+                    const it = k >= 0 && k < tabRow.children.length ? tabRow.children[k] : null
+                    if (!it) return
+                    const left = tabRow.x + it.x, right = left + it.width
+                    if (left < contentX) contentX = left
+                    else if (right > contentX + width) contentX = Math.min(contentWidth - width, right - width)
+                }
+                Connections { target: win; function onPageChanged() { Qt.callLater(tabFlick.revealCurrent) } }
+                onWidthChanged: Qt.callLater(revealCurrent)
+                WheelHandler {
+                    onWheel: function(event) {
+                        const delta = event.angleDelta.x || event.angleDelta.y
+                        tabFlick.contentX = Math.max(0, Math.min(tabFlick.contentWidth - tabFlick.width, tabFlick.contentX - delta))
+                    }
+                }
             Row {
                 id: tabRow
                 x: 6
@@ -835,13 +854,14 @@ FloatingWindow {
                 Behavior on x { NumberAnimation { duration: M3.d(M3.bouncy ? 420 : 320); easing.type: M3.bouncy ? Easing.OutBack : Easing.OutCubic; easing.overshoot: 1.2 * Prefs.bounce } }
                 Behavior on width { NumberAnimation { duration: M3.d(M3.bouncy ? 420 : 320); easing.type: M3.bouncy ? Easing.OutBack : Easing.OutCubic; easing.overshoot: 1.2 * Prefs.bounce } }
             }
+            }
             Rectangle { x: 0; y: 44; width: parent.width; height: 1; color: M3.outlineVariant }
         }
 
         Item {
             id: pagesHolder
             x: win.railW + 4
-            y: tabs.visible ? 136 : 92
+            y: 92
             width: parent.width - x
             height: parent.height - y
             clip: true
