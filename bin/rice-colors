@@ -62,9 +62,10 @@ def reapply():
     try:
         cur = open(CURRENT).read().strip()
     except Exception:
-        return
+        return False
     if cur and os.path.isfile(cur) and os.path.isfile(APPLY):
-        subprocess.run(["bash", APPLY, cur])
+        return subprocess.run(["bash", APPLY, cur]).returncode == 0
+    return False
 
 
 def refresh():
@@ -98,7 +99,8 @@ def main(argv):
         with open(MODE, "w") as f:
             f.write(k + "\n")
         if os.path.isfile(APPLY):
-            reapply()          # commands.sh calls "rice-colors refresh" when it is done
+            if not reapply():  # commands.sh calls "rice-colors refresh" when it is done
+                sys.exit(1)
         else:
             refresh()
     elif cmd == "refresh":

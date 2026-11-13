@@ -491,12 +491,31 @@ FloatingWindow {
         hrun([k === "enabled" ? "anim-enabled" : "anim-speed", k === "enabled" ? (v ? "on" : "off") : v], "Applied")
     }
 
+    property int colorApplySerial: 0
     function setColorMode(m) {
         colorMode = m
-        Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-colors\" mode \"$1\"", "_", m])
         let nm = m
         for (let i = 0; i < schemes.length; i++) if (schemes[i].key === m) nm = schemes[i].name
         status = "Colors: " + nm + " (applying...)"
+        colorApply.createObject(win, { schemeName: nm, pendingStatus: status, mode: m, serial: ++colorApplySerial })
+    }
+
+    Component {
+        id: colorApply
+        Process {
+            id: colorJob
+            property string schemeName
+            property string pendingStatus
+            property string mode
+            property int serial
+            command: [win.home + "/.local/bin/rice-colors", "mode", mode]
+            running: true
+            onExited: function(code) {
+                if (serial === win.colorApplySerial && win.status === pendingStatus)
+                    win.status = code === 0 ? "Colors: " + schemeName + " (applied)" : I18n.t("That did not work")
+                destroy()
+            }
+        }
     }
 
     property var schemes: []
