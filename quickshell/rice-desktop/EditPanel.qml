@@ -331,6 +331,10 @@ Item {
                 Pills { options: [["1", "Calm"], ["1.4", "Normal"], ["2", "High"], ["2.8", "Max"]]
                     current: ep.root ? String(ep.root.optOf("visualizer", "gain", "1.4")) : "1.4"
                     onChosen: function(v) { ep.root.setOpt("visualizer", "gain", v) } }
+                Switchy { label: Tr.t("Hide quiet bars and dots"); on: ep.root ? ep.root.optOf("visualizer", "hideQuietBars", "on") === "on" : true
+                    onFlipped: function(v) { ep.root.setOpt("visualizer", "hideQuietBars", v ? "on" : "off") } }
+                Switchy { label: Tr.t("Show when silent"); on: ep.root ? ep.root.optOf("visualizer", "showWhenSilent", "off") === "on" : false
+                    onFlipped: function(v) { ep.root.setOpt("visualizer", "showWhenSilent", v ? "on" : "off") } }
                 Label { text: Tr.t("Bar ends") }
                 Pills { options: [["square", "Square"], ["rounded", "Rounded"], ["pill", "Pill"]]
                     current: ep.root ? ep.root.optOf("visualizer", "shape", "square") : "square"

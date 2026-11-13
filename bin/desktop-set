@@ -17,9 +17,9 @@ WIDGETS = ["weather", "media", "resources", "usercard", "calendar", "visualizer"
            "gauge", "date", "sky", "nowring", "player", "playpill", "lyrics", "storage", "trio",
            "forecast", "music", "datepill"]
 # what the widget editor stores per widget (Settings > Desktop > Edit widgets, or SUPER+ALT+W)
-GEOM = ("x", "y", "scale", "w", "h", "opacity", "bg", "style", "flip", "color", "font", "focus", "metric", "bars", "shape", "gap", "gain")
+GEOM = ("x", "y", "scale", "w", "h", "opacity", "bg", "style", "flip", "color", "font", "focus", "metric", "bars", "shape", "gap", "gain", "hideQuietBars", "showWhenSilent")
 # the visualizer's bars (Edit mode > Visualizer)
-VIZ = {"bars": ["16", "32", "48", "64"], "shape": ["square", "rounded", "pill"], "gap": ["thin", "normal", "wide"], "gain": ["1", "1.4", "2", "2.8"]}
+VIZ = {"bars": ["16", "32", "48", "64"], "shape": ["square", "rounded", "pill"], "gap": ["thin", "normal", "wide"], "gain": ["1", "1.4", "2", "2.8"], "hideQuietBars": ["on", "off"], "showWhenSilent": ["on", "off"]}
 STYLES = {"visualizer": ["bars", "mirror", "wave", "dots"], "clock": ["digital", "line", "cookie", "pixel"],
           "gauge": ["water", "pentagon", "cookie", "flower", "clover", "hexagon", "sun", "circle"],
           "date": ["flower", "cookie", "clover", "sun", "square", "circle"]}

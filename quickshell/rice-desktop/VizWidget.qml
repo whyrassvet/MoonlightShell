@@ -17,7 +17,11 @@ Item {
     property string shape: "square"
     property string spacing: "normal"
     property real gain: 1              // how tall the bars go (Edit mode > Visualizer > Height of the bars)
+    property bool hideQuietBars: true
+    property bool showWhenSilent: false
     onGainChanged: cv.requestPaint()
+    onHideQuietBarsChanged: cv.requestPaint()
+    onShowWhenSilentChanged: cv.requestPaint()
     readonly property int count: nBars === 16 || nBars === 32 || nBars === 48 ? nBars : 64
     readonly property real pitch: width / count
     readonly property real gapK: spacing === "thin" ? 0.16 : (spacing === "wide" ? 0.5 : 0.32)
@@ -105,16 +109,18 @@ Item {
 
     // everything is drawn here
     property bool quiet: true
+    onQuietChanged: cv.requestPaint()
     Canvas {
         id: cv
         anchors.fill: parent
-        opacity: vz.quiet ? 0 : 1
+        opacity: vz.quiet && !vz.showWhenSilent ? 0 : 1
         Behavior on opacity { NumberAnimation { duration: 650; easing.type: Easing.OutCubic } }
         onVisibleChanged: requestPaint()
         onPaint: {
             const c = getContext("2d")
             c.reset()
-            const n = vz.count, W = width, H = height, b = vz.bars
+            const n = vz.count, W = width, H = height, b = vz.quiet && vz.showWhenSilent ? new Array(64).fill(0) : vz.bars
+            const hideQuiet = vz.hideQuietBars
             if (!b || b.length === 0) return
             if (vz.style === "bars" || vz.style === "mirror") {
                 // straight bars with flat tops, like cava in a terminal: one soft fade over the whole height,
@@ -126,11 +132,13 @@ Item {
                 const r = Math.min(w / 2, Math.max(0, w * rr), 14)
                 const cols = vz.cols
                 const one = vz.colorMode === "accent" || vz.colorMode === "mono"
-                function bar(bx, by, bw2, bh2) { if (r > 0.5) c.roundedRect(bx, by, bw2, bh2, r, r); else c.rect(bx, by, bw2, bh2) }
+                function bar(bx, by, bw2, bh2) { const br = Math.min(r, bh2 / 2); if (br > 0.5) c.roundedRect(bx, by, bw2, bh2, br, br); else c.rect(bx, by, bw2, bh2) }
                 if (one) { c.fillStyle = cols[0] || "#fff"; c.beginPath() }
                 for (let i = 0; i < n; i++) {
-                    const v = Math.max(0, Math.min(1, vz.level(b, i) / 100))
-                    const h = Math.max(Math.max(2, r * 2), Math.round(v * span))
+                    const level = vz.level(b, i)
+                    const v = Math.max(0, Math.min(1, (level - (hideQuiet ? 1 : 0)) / 100))
+                    const h = hideQuiet ? Math.round(v * span) : Math.max(Math.max(2, r * 2), Math.round(v * span))
+                    if (h <= 0) continue
                     const x = Math.round(i * (vz.bw + vz.gap))
                     if (!one) { c.fillStyle = cols[i] || "#fff"; c.beginPath() }
                     if (mir) { bar(x, H / 2 - h, w, h); bar(x, H / 2, w, h) }
@@ -194,8 +202,8 @@ Item {
                 const d = Math.max(2, Math.min(vz.bw, 10))
                 const step = d + 3
                 for (let i = 0; i < n; i++) {
-                    const v = vz.level(b, i) / 100
-                    const k = Math.max(1, Math.round(v * H / step))
+                    const v = Math.max(0, vz.level(b, i) - (hideQuiet ? 1 : 0)) / 100
+                    const k = Math.max(hideQuiet ? 0 : 1, Math.round(v * H / step))
                     const x = i * (vz.bw + vz.gap) + vz.bw / 2
                     c.fillStyle = vz.cols[i] || "#fff"
                     for (let j = 0; j < k; j++) {

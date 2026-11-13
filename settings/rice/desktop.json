@@ -30,6 +30,8 @@
       "gain": "1.4",
       "shape": "rounded",
       "gap": "wide",
+      "hideQuietBars": "on",
+      "showWhenSilent": "on",
       "h": 60
     },
     "battery": {
