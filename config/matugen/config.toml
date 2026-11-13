@@ -1,9 +1,8 @@
 [config]
 
-[templates.waybar]
-input_path = '~/.config/matugen/templates/waybar.css'
-output_path = '~/.config/waybar/colors.css'
-post_hook = 'setsid -f $HOME/.local/bin/waybar-reload'
+[templates.rice_colors]
+input_path = '~/.config/matugen/templates/rice-colors.css'
+output_path = '~/.config/rice/colors.css'
 
 [templates.kitty]
 input_path = '~/.config/matugen/templates/kitty.conf'

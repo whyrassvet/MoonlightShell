@@ -39,7 +39,6 @@ BIN = HOME + "/.local/bin"
 THUMBS = HOME + "/.cache/quickshell/thumbs"
 MY_THUMBS = CACHE + "/thumbs"
 WALL_CURRENT = HOME + "/.cache/hyprquickpaper-current"
-WAYBAR = HOME + "/.config/waybar"
 
 TABS = ["dashboard", "control", "tasks", "wallpaper", "performance", "about"]
 OLD_TABS = ["dashboard", "wallpaper", "performance", "about"]   # the tabs before Control and Tasks came
@@ -178,41 +177,19 @@ def sh(cmd, timeout=4):
 
 
 def accent():
-    m = re.search(r"@define-color\s+accent\s+(#[0-9a-fA-F]{6})", read(WAYBAR + "/colors.css"))
+    m = re.search(r"@define-color\s+accent\s+(#[0-9a-fA-F]{6})", read(DIR + "/colors.css"))
     return m.group(1) if m else "#9ec9bd"
 
 
 def bar():
-    """where Waybar is and how tall, so the dashboard opens just under (or over) it"""
-    pos, h = "top", 34
+    """The Moonlight bar's position and size."""
     try:
-        s = read(WAYBAR + "/config.jsonc")
-        s = re.sub(r"^\s*//.*$", "", s, flags=re.M)
-        c = json.loads(s)
-        pos = c.get("position", "top")
-        h = int(c.get("height", 34) or 34)
+        c = json.load(open(DIR + "/bar.json"))
     except Exception:
-        pass
-    pad, extra, auto = 4, 0, False
-    try:
-        u = json.load(open(WAYBAR + "/ui.json"))
-        if u.get("height") is not None:
-            pad = int(u["height"])
-        extra = {"floating": 12, "islands": 8, "island": 12}.get(u.get("style"), 0)
-        auto = u.get("autohide") is True
-    except Exception:
-        pass
-    # its color, so a dashboard that grows out of it can match
-    rgb, alpha = [13, 13, 13], 0.9
-    m = re.search(r"window#waybar\s*\{[^}]*?background:\s*rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", read(WAYBAR + "/style.css"), re.S)
-    if m:
-        rgb = [int(x) for x in m.groups()]
-    try:
-        alpha = float(json.load(open(WAYBAR + "/ui.json")).get("alpha", 0.9))
-    except Exception:
-        pass
-    return {"position": pos if pos in ("top", "bottom") else "top", "height": h + 2 * pad + extra, "autohide": auto,
-            "rgb": rgb, "alpha": round(alpha, 2)}
+        c = {}
+    pos = c.get("position", "top")
+    return {"position": pos if pos in ("top", "bottom") else "top", "height": c.get("height", 38),
+            "autohide": c.get("autohide") is True, "rgb": [13, 13, 13], "alpha": c.get("opacity", 0.72)}
 
 
 def ensure_shell():
@@ -225,10 +202,7 @@ def ensure_shell():
 
 def bar_on():
     """the DarkShadow bar (the island lives in it) is on"""
-    try:
-        return json.load(open(DIR + "/bar.json")).get("enabled", True) is not False
-    except Exception:
-        return True
+    return True
 
 
 def classic(c=None):
@@ -467,20 +441,6 @@ def packages(distro_id):
     if shutil.which("pacman"):
         n = sh(["pacman", "-Qq"], 6)
         return "%d (pacman)" % len(n.splitlines()) if n else ""
-    if shutil.which("xbps-query"):
-        n = sh(["xbps-query", "-l"], 6)
-        return "%d (xbps)" % len(n.splitlines()) if n else ""
-    if os.path.isdir("/run/current-system/sw"):
-        n = sh(["nix-store", "-qR", "/run/current-system/sw"], 10)
-        user = sh(["nix-store", "-qR", HOME + "/.nix-profile"], 10) if os.path.exists(HOME + "/.nix-profile") else ""
-        cnt = len(set(n.splitlines()) | set(user.splitlines()))
-        return "%d (nix)" % cnt if cnt else ""
-    if shutil.which("dpkg-query"):
-        n = sh(["dpkg-query", "-f", ".\n", "-W"], 6)
-        return "%d (dpkg)" % len(n.splitlines()) if n else ""
-    if shutil.which("rpm"):
-        n = sh(["rpm", "-qa"], 8)
-        return "%d (rpm)" % len(n.splitlines()) if n else ""
     return ""
 
 
@@ -542,7 +502,7 @@ def main(a):
         except Exception:
             c["opacity"] = round(clamp(c["bar"]["alpha"], 0.55, 1.0), 2)
         c["accent"] = accent()
-        # the classic dashboard only runs when it is chosen (or the bar is Waybar)
+        # the classic dashboard only runs when it is chosen
         if not classic(c):
             c["enabled"] = False
         # rice-effects: no blur and no transparency (Lite or gaming mode); gaming mode also keeps the

@@ -273,7 +273,7 @@ Item {
             visible: page.st.have !== undefined && page.st.have.mpvpaper === false
             width: parent.width; height: miss.implicitHeight + 26; radius: M3.rM; color: M3.alpha(M3.tertiary, 0.12)
             T { id: miss; x: 18; y: 13; width: parent.width - 36; wrapMode: Text.WordWrap; font.pixelSize: 13
-                text: I18n.t("Live wallpapers need mpvpaper (and ffmpeg for the previews). Install them with your package manager (NixOS: pkgs.mpvpaper, pkgs.ffmpeg).") }
+                text: I18n.t("Live wallpapers need mpvpaper (and ffmpeg for the previews). Install them with your package manager.") }
         }
         ToggleRow {
             label: I18n.t("Sound")

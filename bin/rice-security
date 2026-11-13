@@ -55,30 +55,8 @@ def sysctl(key):
         return None
 
 
-def distro():
-    try:
-        t = open("/etc/os-release").read().lower()
-    except Exception:
-        return ""
-    ids = " ".join(re.findall(r'^(?:id|id_like)=(.*)$', t, re.M)).replace('"', "")
-    return ids
-
-
 def install_cmd():
-    d = distro()
-    if "arch" in d:
-        return "sudo pacman -S --needed clamav && sudo freshclam"
-    if "void" in d.split():
-        return "sudo xbps-install -y clamav && sudo freshclam"
-    if "fedora" in d or "rhel" in d:
-        return "sudo dnf install clamav clamav-update && sudo freshclam"
-    if "debian" in d or "ubuntu" in d:
-        return "sudo apt install clamav && sudo freshclam"
-    if "suse" in d:
-        return "sudo zypper install clamav && sudo freshclam"
-    if "nixos" in d:
-        return "echo 'NixOS: add  services.clamav.scanner.enable = true;  and  services.clamav.updater.enable = true;  to your configuration.nix, then run: sudo nixos-rebuild switch'"
-    return "echo 'Install the clamav package with your package manager, then run: sudo freshclam'"
+    return "sudo pacman -S --needed clamav && sudo freshclam"
 
 
 def db_age_days():

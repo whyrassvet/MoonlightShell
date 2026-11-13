@@ -23,10 +23,10 @@ PanelWindow {
     property var bc: ({})
     // no bar.json yet (a fresh install or an update) = on. On the left or right edge VBar.qml is the bar instead
     readonly property bool vertical: bc.position === "left" || bc.position === "right"
-    readonly property bool on: bc.enabled !== false && !vertical
+    readonly property bool on: !vertical
     // the bar on the left or right edge (VBar.qml): this window stays for the island's cards only (the clock on the
     // side bar opens the island's Today card here, at the top), without the bar itself
-    readonly property bool ghostOnly: bc.enabled !== false && vertical
+    readonly property bool ghostOnly: vertical
     // the bar itself: 1 shown .. 0 gone (it fades when the bar moves to a side edge, and back)
     property real barK: on ? 1 : 0
     Behavior on barK { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }

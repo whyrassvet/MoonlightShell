@@ -150,8 +150,6 @@ def tell():
         groups = []
     if "input" in groups:
         body = "You joined the input group: log out and back in once, then it works."
-    elif os.path.exists("/etc/NIXOS"):
-        body = 'Add programs.shadows-shell.user = "%s"; to configuration.nix (or "input" to your extraGroups), rebuild, then log in again.' % os.environ.get("USER", "you")
     else:
         body = "One step: Settings > Desktop > Infinite Desktop > Allow (then log in again)."
     try:

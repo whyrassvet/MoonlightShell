@@ -133,7 +133,7 @@ def palette():
         pass
     acc = k.get("selection_background") or "#9ec9bd"
     try:
-        m = re.search(r"@define-color accent (#[0-9a-fA-F]{6})", open(HOME + "/.config/waybar/colors.css").read())
+        m = re.search(r"@define-color accent (#[0-9a-fA-F]{6})", open(HOME + "/.config/rice/colors.css").read())
         if m and "selection_background" not in k:
             acc = m.group(1)
     except OSError:

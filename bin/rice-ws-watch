@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """rice-ws-watch: listens to Hyprland's events (or niri's event stream).
 
-- workspace switched: sends SIGRTMIN+8 to Waybar (the "signal": 8 of the custom/ws modules), so the
-  buttons change at once. Works for both process names: waybar (Arch) and .waybar-wrapped (NixOS).
 - workspace switched while the widget editor is open: closes the editor.
 - config reloaded (gaming mode, updates, settings, hyprctl reload): puts your wallpaper border
   colors back (border-sync), so borders never fall back to the default color.
@@ -10,41 +8,11 @@ Started by rice-desktop; only one copy runs.
 """
 import fcntl
 import os
-import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
-
-SIG = signal.SIGRTMIN + 8
-EVENTS = (b"workspace>>", b"workspacev2>>", b"focusedmon>>", b"activespecial>>",
-          b"createworkspace>>", b"destroyworkspace>>", b"moveworkspace>>")
-NAMES = {"waybar", ".waybar-wrapped", "waybar-wrapped"}
-
-
-def waybar_pids():
-    out = []
-    for p in os.listdir("/proc"):
-        if p.isdigit():
-            try:
-                comm = open("/proc/%s/comm" % p).read().strip()
-                argv = open("/proc/%s/cmdline" % p, "rb").read().split(b"\0")[:2]
-                names = {comm} | {os.path.basename(a.decode(errors="ignore")) for a in argv if a}
-                if names & NAMES:
-                    out.append(int(p))
-            except OSError:
-                pass
-    return out
-
-
-def poke():
-    for pid in waybar_pids():
-        try:
-            os.kill(pid, SIG)
-        except OSError:
-            pass
-
 
 BORDER_SYNC = os.path.expanduser("~/.local/bin/border-sync")
 CUSTOM_FLAG = os.path.expanduser("~/.config/rice/border-custom")
@@ -103,10 +71,7 @@ def niri_loop():
     while True:
         try:
             p = subprocess.Popen(["niri", "msg", "-j", "event-stream"], stdout=subprocess.PIPE, text=True)
-            poke()
             for line in p.stdout:
-                if line.startswith(('{"WorkspaceActivated', '{"WorkspacesChanged')):
-                    poke()
                 if line.startswith('{"WorkspaceActivated'):
                     close_editor()
             p.wait()
@@ -133,7 +98,6 @@ def main():
         try:
             s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             s.connect(path)
-            poke()
             buf = b""
             while True:
                 data = s.recv(4096)
@@ -141,8 +105,6 @@ def main():
                     break
                 buf += data
                 *lines, buf = buf.split(b"\n")
-                if any(l.startswith(EVENTS) for l in lines):
-                    poke()
                 if any(l.startswith((b"workspace>>", b"workspacev2>>", b"activespecial>>")) for l in lines):
                     close_editor()
                 if any(l.startswith(b"configreloaded>>") for l in lines):

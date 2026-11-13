@@ -11,7 +11,6 @@ case "$1" in
     for f in launcher-open clip-open wifi-open bluetooth-open power-open volume-open dashboard-open; do
       [ -e "$HOME/.cache/rice/$f" ] || : >"$HOME/.cache/rice/$f"
     done
-    "$HOME/.local/bin/rice-bar" enabled 2>/dev/null || "$HOME/.local/bin/waybar-autohide" ensure >/dev/null 2>&1 &
     [ -x "$HOME/.local/bin/rice-ws-watch" ] && setsid -f "$HOME/.local/bin/rice-ws-watch" >/dev/null 2>&1
     [ -x "$HOME/.local/bin/rice-update" ] && setsid -f "$HOME/.local/bin/rice-update" watch >/dev/null 2>&1
     [ -x "$HOME/.local/bin/rice-welcome" ] && "$HOME/.local/bin/rice-welcome" start >/dev/null 2>&1 &

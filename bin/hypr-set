@@ -812,12 +812,6 @@ def kbd_lua(k):
 
 def xkb_layouts():
     paths = list(XKB_LISTS)
-    try:
-        for d in os.listdir("/nix/store"):
-            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
-                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
-    except Exception:
-        pass
     for p in paths:
         try:
             txt = open(p).read()
@@ -863,25 +857,12 @@ def kbd_current():
 
 
 def xkb_paths():
-    paths = list(XKB_LISTS)
-    try:
-        for d in os.listdir("/nix/store"):
-            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
-                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
-    except Exception:
-        pass
-    return paths
+    return list(XKB_LISTS)
 
 
 def xkb_variants(layout):
     """[(variant, description)] for one layout, from the variant list of xkeyboard-config"""
     paths = list(XKB_LISTS)
-    try:
-        for d in os.listdir("/nix/store"):
-            if d.endswith("-xkeyboard-config") or "-xkeyboard-config-" in d:
-                paths.append("/nix/store/%s/share/X11/xkb/rules/evdev.lst" % d)
-    except Exception:
-        pass
     for p in paths:
         try:
             txt = open(p).read()

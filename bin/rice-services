@@ -210,7 +210,7 @@ def profile_set(name):
         sys.exit("profile: power-saver|balanced|performance")
     if not shutil.which("powerprofilesctl"):
         bg(["notify-send", "-a", "DarkShadow's Shell", "Power modes need power-profiles-daemon",
-            "Install it (Arch: power-profiles-daemon, NixOS: services.power-profiles-daemon.enable)"])
+            "Install power-profiles-daemon"])
         return
     r = run(["powerprofilesctl", "set", name], 10)
     if r is None or r.returncode != 0:

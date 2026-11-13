@@ -40,7 +40,7 @@ Item {
     function wv(id, key, d) { const w = page.ctl.dst.widgets; return w && w[id] && w[id][key] !== undefined ? w[id][key] : d }
     property color accent: "#9ec9bd"
     Process {
-        command: ["bash", "-c", "sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/waybar/colors.css\" 2>/dev/null | head -1"]
+        command: ["bash", "-c", "sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/rice/colors.css\" 2>/dev/null | head -1"]
         running: true
         stdout: StdioCollector { onStreamFinished: { const t = text.trim(); if (/^#[0-9a-fA-F]{6}$/.test(t)) page.accent = t } }
     }

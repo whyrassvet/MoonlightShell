@@ -206,9 +206,9 @@ detach() { setsid -f "$@" >/dev/null 2>&1 </dev/null || true; }
 config_dirs() { local d; for d in "$ROOT"/config/*/; do [ -d "$d" ] && basename "$d"; done; }
 pretty_dir() {
   case "$1" in
-    hypr) echo "Hyprland" ;; waybar) echo "Waybar" ;; swaync) echo "Notifications (swaync)" ;;
+    hypr) echo "Hyprland" ;; swaync) echo "Notifications (swaync)" ;;
     rofi) echo "Rofi" ;; matugen) echo "Matugen colors" ;; kitty) echo "Kitty terminal" ;;
-    fastfetch) echo "Fastfetch" ;; btop) echo "btop theme (transparent)" ;; fish) echo "Fish shell" ;; waybar-presets) echo "Waybar presets" ;; *) echo "$1" ;;
+    fastfetch) echo "Fastfetch" ;; btop) echo "btop theme (transparent)" ;; fish) echo "Fish shell" ;; *) echo "$1" ;;
   esac
 }
 
@@ -232,14 +232,12 @@ wm_name() { case "$WM" in niri) echo "niri" ;; both) echo "Hyprland and niri" ;;
 wm_packages() {
   local p keep=()
   if has_niri; then
-    ARCH_PKGS+=("${PKG_NIRI[@]}"); FEDORA_PKGS+=("${FPKG_NIRI[@]}"); FEDORA_COPRS+=("$FEDORA_NIRI_COPR")
+    ARCH_PKGS+=("${PKG_NIRI[@]}")
     NEED_CMDS+=(niri xwayland-satellite)
   fi
   if ! has_hypr; then
     for p in "${ARCH_PKGS[@]}"; do case "$p" in hyprland|xdg-desktop-portal-hyprland) ;; *) keep+=("$p") ;; esac; done
     ARCH_PKGS=("${keep[@]}"); keep=()
-    for p in "${FEDORA_PKGS[@]}"; do case "$p" in hyprland|xdg-desktop-portal-hyprland) ;; *) keep+=("$p") ;; esac; done
-    FEDORA_PKGS=("${keep[@]}"); keep=()
     for p in "${NEED_CMDS[@]}"; do [ "$p" = Hyprland ] || keep+=("$p"); done
     NEED_CMDS=("${keep[@]}")
   fi
@@ -271,38 +269,6 @@ pkg_load() {
   done <"$PKG_SPLIT"
 }
 
-# fedora_check: writes the names of the FEDORA_PKGS your repositories have (one per line)
-fedora_check() {
-  local names=() p
-  for p in "${FEDORA_PKGS[@]}"; do IFS='|' read -r -a alts <<<"$p"; names+=("${alts[@]}"); done
-  dnf repoquery -q --qf '%{name}\n' "${names[@]}" 2>/dev/null | sort -u >"$PKG_SPLIT"
-  return 0
-}
-# fedora_pick "a|b": the first name your repositories have (nothing when none)
-fedora_pick() {
-  local a
-  IFS='|' read -r -a alts <<<"$1"
-  for a in "${alts[@]}"; do grep -qx "$a" "$PKG_SPLIT" 2>/dev/null && { echo "$a"; return 0; }; done
-  return 0
-}
-
-# matugen from its GitHub releases (Fedora 43 and older have no package): ~/.local/bin/matugen
-matugen_download() {
-  local arch url d
-  arch="$(uname -m)"
-  url="$(curl -fsSL --max-time 20 https://api.github.com/repos/InioX/matugen/releases/latest 2>/dev/null |
-         grep -oE '"browser_download_url": *"[^"]+"' | grep -oE 'https://[^"]+' |
-         grep -iE "${arch}.*\.tar\.gz$" | head -1)"
-  [ -n "$url" ] || return 1
-  d="$(mktemp -d)"
-  if curl -fsSL --max-time 120 -o "$d/m.tar.gz" "$url" && tar -xzf "$d/m.tar.gz" -C "$d" 2>/dev/null; then
-    local bin; bin="$(find "$d" -type f -name matugen | head -1)"
-    if [ -n "$bin" ]; then mkdir -p "$HOME/.local/bin"; install -m 755 "$bin" "$HOME/.local/bin/matugen"; rm -rf "$d"; return 0; fi
-  fi
-  rm -rf "$d"
-  return 1
-}
-
 # the installed Hyprland is older than the Lua config needs: prints its version, nothing when it is fine or missing
 hypr_too_old() {
   command -v Hyprland >/dev/null 2>&1 || return 0
@@ -321,7 +287,6 @@ flavor_notes() {
     endeavouros) note "EndeavourOS: plain Arch with yay or paru, everything is installed from the Arch repositories and the AUR." ;;
     garuda)      note "Garuda: Arch based, paru is used for the AUR packages." ;;
     manjaro)     warn "Manjaro holds packages back for weeks. Hyprland may be older than 0.55 (the Lua config needs 0.55): CachyOS or EndeavourOS work better." ;;
-    nobara)      note "Nobara: Fedora based, the Fedora steps below are used." ;;
   esac
 }
 
@@ -353,8 +318,6 @@ install_yay() {
 }
 
 step_packages() {
-  case "$FAMILY" in
-    arch)
       sudo_keepalive || return 0
       if [ "$DRY_RUN" = 1 ]; then
         info "would install ${#ARCH_PKGS[@]} packages: ${ARCH_PKGS[*]}"; return 0
@@ -412,65 +375,6 @@ step_packages() {
       if pacman -Qi bluez >/dev/null 2>&1; then
         task "Turning on the Bluetooth service" sudo systemctl enable --now bluetooth.service
       fi
-      ;;
-    fedora)
-      if [ "$FEDORA_ATOMIC" = 1 ]; then
-        warn "$DISTRO_NAME is an atomic (image based) Fedora: packages are layered with rpm-ostree."
-        note "Run these, reboot, then ./install.sh again:"
-        local c; for c in "${FEDORA_COPRS[@]}"; do note "  sudo wget -P /etc/yum.repos.d/ https://copr.fedorainfracloud.org/coprs/$c/repo/fedora-\$(rpm -E %fedora)/${c%%/*}-${c##*/}-fedora-\$(rpm -E %fedora).repo"; done
-        local first=() p; for p in "${FEDORA_PKGS[@]}"; do first+=("${p%%|*}"); done
-        note "  rpm-ostree install ${first[*]}"
-        return 0
-      fi
-      sudo_keepalive || return 0
-      if [ "$DRY_RUN" = 1 ]; then
-        info "would enable COPR ${FEDORA_COPRS[*]} and install ${#FEDORA_PKGS[@]} packages: ${FEDORA_PKGS[*]//|/ or }"; return 0
-      fi
-      task "COPR support for dnf" sudo dnf install -y 'dnf-command(copr)'
-      local c
-      for c in "${FEDORA_COPRS[@]}"; do task "Enabling COPR $c" sudo dnf copr enable -y "$c"; done
-      task "Checking which packages your Fedora has" fedora_check
-      local have=() absent=() p n
-      for p in "${FEDORA_PKGS[@]}"; do
-        n="$(fedora_pick "$p")"
-        if [ -n "$n" ]; then have+=("$n"); else absent+=("${p//|/ or }"); fi
-      done
-      # repoquery did not work at all: just try everything (first names)
-      if [ "${#have[@]}" = 0 ]; then have=(); for p in "${FEDORA_PKGS[@]}"; do have+=("${p%%|*}"); done; absent=(); fi
-      note "${#have[@]} packages to install${absent[0]:+, not in your repositories: ${absent[*]}}"
-      if ! task "Installing ${#have[@]} packages: desktop, shell, tools and fonts" sudo dnf install -y --skip-unavailable "${have[@]}"; then
-        warn "Installing them together failed, trying one by one"
-        local failed=()
-        for p in "${have[@]}"; do
-          rpm -q "$p" >/dev/null 2>&1 && continue
-          task "  $p" sudo dnf install -y "$p" || failed+=("$p")
-        done
-        [ "${#failed[@]}" -gt 0 ] && warn "Could not install: ${failed[*]} (see $LOG)"
-      fi
-      if ! command -v matugen >/dev/null 2>&1; then
-        if task "matugen (theme colors) from its GitHub releases" matugen_download; then ok "matugen is in ~/.local/bin"
-        else warn "matugen could not be installed: colors from the wallpaper will not change (cargo install matugen works too)"; fi
-      fi
-      # power modes, unless TLP or auto-cpufreq already manage power
-      if rpm -q power-profiles-daemon >/dev/null 2>&1 && ! rpm -q tlp >/dev/null 2>&1 && ! rpm -q auto-cpufreq >/dev/null 2>&1; then
-        task "Turning on power modes (power-profiles-daemon)" sudo systemctl enable --now power-profiles-daemon.service
-      fi
-      rpm -q bluez >/dev/null 2>&1 && task "Turning on the Bluetooth service" sudo systemctl enable --now bluetooth.service
-      ;;
-    nixos)
-      info "NixOS installs packages from your system configuration, not from this script."
-      note "Add this line to /etc/nixos/configuration.nix:"
-      printf '\n        %simports = [ %s/nix/module.nix ];%s\n\n' "$CW" "$ROOT" "$C0"
-      note "or with flakes:  inputs.darkshadows-shell.url = \"github:shadowww-dev/DarkShadowShell\";"
-      note "then run:  sudo nixos-rebuild switch"
-      note "Infinite Desktop (SUPER + ALT + mouse) also needs, next to the module import:  programs.shadows-shell.user = \"$USER\";"
-      ;;
-    *)
-      warn "$DISTRO_NAME is not supported for automatic packages."
-      note "Install these with your package manager, then run ./install.sh again:"
-      note "${NEED_CMDS[*]}"
-      ;;
-  esac
 }
 
 set_look() {
@@ -490,7 +394,7 @@ set_look() {
     gsettings set org.gnome.desktop.interface cursor-theme "$theme" || true
     gsettings set org.gnome.desktop.interface cursor-size 24 || true
   fi
-  # Bibata is not packaged everywhere (Fedora): download it for this user when it is missing
+  # Download Bibata for this user when it is missing.
   if [ ! -d "/usr/share/icons/$theme" ] && [ ! -d "$HOME/.local/share/icons/$theme" ] && [ ! -d "$HOME/.icons/$theme" ]; then
     mkdir -p "$HOME/.local/share/icons"
     curl -fsSL -m 120 "https://github.com/ful1e5/Bibata_Cursor/releases/latest/download/$theme.tar.xz" |
@@ -622,8 +526,7 @@ step_configs() {
 copy_lua() { local f; for f in "$ROOT"/lua/*.lua; do [ -f "$f" ] && put "$f" "$HOME/.config/hypr/$(basename "$f")"; done; return 0; }
 
 # ------------------------------------------------------------------ your saved settings
-# settings/ holds what you chose in Settings on the computer that ran ./sync.sh: the Waybar look
-# (ui.json), dashboard, widgets, hot corner, notifications, lock screen, rofi, fonts, cursor, effects.
+# settings/ holds the dashboard, widgets, hot corner, notifications, lock screen, rofi, fonts, cursor and effects.
 # A file is put in place when you do not have it yet, or when you did not change it since the
 # installer put it there last time. Files you changed on this computer are kept, unless you said
 # "use the saved settings" (then yours are backed up first, like every other file).
@@ -633,7 +536,6 @@ settings_dst() {
   local rel="${1#"$ROOT/settings/"}"
   case "$rel" in
     rice/*) echo "$HOME/.config/rice/${rel#rice/}" ;;
-    waybar/*) echo "$HOME/.config/waybar/${rel#waybar/}" ;;
   esac
 }
 settings_sum() { sed -e "s|@HOME@|$HOME|g" -e "s|@USER@|$USER|g" "$1" | sha256sum | cut -c1-16; }
@@ -679,7 +581,6 @@ step_settings() {
     note "To take the saved ones too:  ./install.sh --update --use-saved-settings"
   fi
   if [ "${n_set:-0}" -gt 0 ] && [ "$DRY_RUN" != 1 ]; then
-    [ -f "$HOME/.config/waybar/config.jsonc" ] && task "Waybar: your look" t "$BIN/waybar-set" reapply
     [ -x "$BIN/rice-cursor" ] && task "Cursor" t "$BIN/rice-cursor" restore
   fi
   rm -f "$sf"
@@ -752,18 +653,14 @@ LUA
 }
 # power modes (Performance / Balanced / Power saver in the island, the control center and Home): power-profiles-daemon.
 # Packages only come with a full install; this also runs on updates, so it is there for everyone. Not when TLP,
-# auto-cpufreq or tuned (Fedora's tuned-ppd gives the same thing) already manage power.
+# auto-cpufreq already manage power.
 # Infinite Desktop: SUPER + ALT + mouse reads the mouse and the keyboard directly (rice-canvasd), which needs the
-# input group. NixOS keeps groups in its configuration: it gets the line to add instead.
+# input group.
 ensure_input_group() {
   [ "$DRY_RUN" = 1 ] && return 0
   if id -nG "$USER" 2>/dev/null | tr ' ' '\n' | grep -qx input; then echo "input group: yes"; return 0; fi
   if [ "${NO_INPUT:-0}" = 1 ]; then echo "input group: skipped (--no-input-group)"; return 0; fi
   if [ "$MODE" = update ]; then echo "input group: unchanged during update"; return 0; fi
-  if [ "$FAMILY" = nixos ]; then
-    echo "NixOS: add \"input\" to users.users.$USER.extraGroups in /etc/nixos/configuration.nix, then sudo nixos-rebuild switch"
-    return 0
-  fi
   getent group input >/dev/null 2>&1 || { echo "no input group on this system"; return 0; }
   # the installer asked for your password already; when that ran out, sudo asks once more
   if sudo ${RICE_GUI:+-n} usermod -aG input "$USER"; then
@@ -780,13 +677,8 @@ ensure_power_modes() {
   if [ "$other" = 1 ]; then echo "TLP or auto-cpufreq manage power: left alone"; return 0; fi
   if ! command -v powerprofilesctl >/dev/null 2>&1; then
     [ "$SKIP_PKGS" = 1 ] && { echo "power-profiles-daemon: package installation skipped"; return 0; }
-    case "$FAMILY" in
-      arch)   sudo -n true 2>/dev/null || { echo "power-profiles-daemon: needs sudo, skipped"; return 0; }
-              sudo -n pacman -S --needed --noconfirm power-profiles-daemon || return 0 ;;
-      fedora) sudo -n true 2>/dev/null || { echo "power-profiles-daemon: needs sudo, skipped"; return 0; }
-              rpm -q tuned-ppd >/dev/null 2>&1 || sudo -n dnf install -y power-profiles-daemon || return 0 ;;
-      *) echo "power-profiles-daemon: install it with your package manager"; return 0 ;;
-    esac
+    sudo -n true 2>/dev/null || { echo "power-profiles-daemon: needs sudo, skipped"; return 0; }
+    sudo -n pacman -S --needed --noconfirm power-profiles-daemon || return 0
   fi
   if systemctl list-unit-files power-profiles-daemon.service >/dev/null 2>&1 &&
      ! systemctl is-enabled power-profiles-daemon.service >/dev/null 2>&1; then
@@ -850,7 +742,6 @@ prune_backups() {
 }
 # the quiet version of those tasks, for updates
 refresh_look() {
-  [ -f "$HOME/.config/waybar/config.jsonc" ] && t "$BIN/waybar-set" distro-icon on
   [ -x "$BIN/desktop-set" ] && t "$BIN/desktop-set" state
   [ -x "$BIN/rice-cc" ] && t "$BIN/rice-cc" migrate
   t "$BIN/rice-notify" apply
@@ -862,11 +753,46 @@ refresh_look() {
   [ -x "$BIN/rice-dashboard" ] && t "$BIN/rice-dashboard" blur
   return 0
 }
+migrate_theme_colors() {
+  [ "$DRY_RUN" = 1 ] && return 0
+  local dst="$HOME/.config/rice/colors.css" old="$HOME/.config/waybar/colors.css"
+  mkdir -p "$(dirname "$dst")"
+  if [ ! -e "$dst" ]; then
+    if [ -f "$old" ]; then cp -p "$old" "$dst"
+    else printf '@define-color accent #9ec9bd;\n@define-color on_accent #1a1a1a;\n' >"$dst"; fi
+  fi
+  local cfg="$HOME/.config/matugen/config.toml" template="$HOME/.config/matugen/templates/rice-colors.css" tmp
+  if [ -f "$cfg" ] && grep -Fq '[templates.waybar]' "$cfg"; then
+    tmp="$(mktemp)"
+    if python3 "$ROOT/install/lib/migrate-colors.py" "$cfg" >"$tmp"; then
+      if [ ! -e "$template" ]; then
+        if [ -f "$HOME/.config/matugen/templates/waybar.css" ]; then
+          put "$HOME/.config/matugen/templates/waybar.css" "$template"
+        else
+          put "$ROOT/config/matugen/templates/rice-colors.css" "$template"
+        fi
+      fi
+      put "$tmp" "$cfg" || { rm -f "$tmp"; return 1; }
+    else
+      warn "Custom matugen Waybar template was not changed; configure rice/colors.css manually."
+    fi
+    rm -f "$tmp"
+  fi
+  local style="$HOME/.config/swaync/style.css"
+  if [ -f "$style" ] && grep -Fq '../../.config/waybar/colors.css' "$style"; then
+    tmp="$(mktemp)"
+    sed "s|../../.config/waybar/colors.css|../rice/colors.css|g" "$style" >"$tmp"
+    put "$tmp" "$style" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp"
+  fi
+}
+
 step_finish() {
   local T=25
   task "Remembering your backup folder" first_backup
   task "Remembering where this copy lives (for updates)" remember_repo
-  { [ "$FAMILY" = arch ] || [ "$FAMILY" = fedora ]; } && task "Power modes (power-profiles-daemon)" ensure_power_modes
+  task "Preserving theme colors" migrate_theme_colors
+  task "Power modes (power-profiles-daemon)" ensure_power_modes
   task "Window manager: $(wm_name)" remember_wm
   task "Graphics card (NVIDIA cursor)" write_gpu
   task "Loading the shell's modules in Hyprland" wire_hypr
@@ -880,13 +806,12 @@ step_finish() {
     # an update re-applies your settings quietly: one line instead of ten
     task "Refreshing your settings (bar, dock, blur, notifications, lock screen)" refresh_look
   else
-    [ -f "$HOME/.config/waybar/config.jsonc" ] && task "Waybar: ${DISTRO_NAME} logo" t "$BIN/waybar-set" distro-icon on
     [ -x "$BIN/desktop-set" ] && task "Desktop widgets settings" t "$BIN/desktop-set" state
     [ -x "$BIN/rice-cc" ] && task "Notifications shown by the shell (Google-style pop-ups and control center)" t "$BIN/rice-cc" migrate
     task "Notifications style and blur" t "$BIN/rice-notify" apply
     command -v hyprlock >/dev/null 2>&1 && task "Lock screen and idle timers" t "$BIN/rice-lock" apply
     task "Launcher and bar blur" t "$BIN/rice-rofi" apply
-    [ -x "$BIN/rice-bar" ] && task "DarkShadow bar (Waybar stays off)" t bash -c "\"$BIN/rice-bar\" migrate && \"$BIN/rice-bar\" start"
+    [ -x "$BIN/rice-bar" ] && task "Moonlight bar" t "$BIN/rice-bar" migrate
     task "Panel settings" t "$BIN/rice-hotcorner" apply
     [ -x "$BIN/desktop-set" ] && task "Dock and widget blur" t "$BIN/desktop-set" dock-blur
     [ -x "$BIN/rice-dashboard" ] && task "Panel blur" t "$BIN/rice-dashboard" blur
@@ -924,12 +849,6 @@ step_finish() {
   task "Version V$RICE_VERSION" remember_version
 }
 restart_shell() {
-  if [ -x "$BIN/rice-bar" ] && "$BIN/rice-bar" enabled 2>/dev/null; then
-    "$BIN/rice-bar" start
-  else
-    pkill -x waybar 2>/dev/null; pkill -x .waybar-wrapped 2>/dev/null; sleep 0.3
-    command -v waybar >/dev/null 2>&1 && detach waybar
-  fi
   [ -x "$BIN/rice-desktop" ] && T=10 t "$BIN/rice-desktop" restart
   return 0
 }
@@ -1018,7 +937,6 @@ fi
 if [ "$MODE" = update ]; then
   WANT=(1 0 0 1 1)
   [ "$SKIP_PKGS" = 1 ] && WANT[0]=0
-  [ "$FAMILY" = arch ] || [ "$FAMILY" = fedora ] || WANT[0]=0
   # an update asks nothing: your configs and settings stay as they are (--use-saved-settings takes the saved ones)
   MENU_CHOICE=99
 else
@@ -1043,7 +961,7 @@ WM="${WM_ARG:-$(wm_guess)}"
 wm_packages
 if [ "$MENU_CHOICE" = 2 ]; then
   menu_multi "Choose what to install" \
-    "Packages|$(wm_name), Quickshell, Waybar, tools|${WANT[0]}" \
+    "Packages|$(wm_name), Quickshell, tools|${WANT[0]}" \
     "Fonts|Inter, Rubik, Nerd Font icons and clock fonts|1" \
     "Config files|Hyprland, bar, notifications, launcher|1" \
     "Apps and scripts|Settings app, widgets, dock|1" \
@@ -1102,10 +1020,7 @@ fi
 old_hypr="$(hypr_too_old)"
 if has_hypr && [ -n "$old_hypr" ] && [ "$DRY_RUN" != 1 ]; then
   warn "Hyprland $old_hypr is older than 0.55. The config is written in Lua and needs 0.55 or newer."
-  case "$FAMILY" in
-    arch)   note "Update it: sudo pacman -Syu hyprland (Manjaro: the new version can take a while to arrive)" ;;
-    fedora) note "Update it: sudo dnf upgrade --refresh hyprland (the nett00n/hyprland COPR carries the newest)" ;;
-  esac
+  note "Update it: sudo pacman -Syu hyprland (Manjaro: the new version can take a while to arrive)"
 fi
 if [ "$IN_HYPR" = 1 ] && [ "$DRY_RUN" != 1 ]; then
   errs="$(t hyprctl configerrors 2>/dev/null | grep -v '^\s*$' | head -5 || true)"

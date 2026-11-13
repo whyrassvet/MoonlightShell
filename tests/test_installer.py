@@ -71,6 +71,61 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Arch-based", result.stderr)
         self.assertEqual(list(self.home.iterdir()), [])
 
+    def test_arch_derivative_and_window_manager_package_selection(self):
+        self.os_release.write_text('ID=example\nID_LIKE="arch"\nNAME="Test derivative"\n')
+        for wm in ("hyprland", "niri", "both"):
+            with self.subTest(wm=wm):
+                result = self.install("--dry-run", "--yes", "--wm=" + wm)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                packages = next(line for line in result.stdout.splitlines() if "would install" in line)
+                self.assertEqual(" niri " in " " + packages + " ", wm in ("niri", "both"))
+                self.assertEqual(" hyprland " in " " + packages + " ", wm in ("hyprland", "both"))
+                self.assertEqual(list(self.home.iterdir()), [])
+
+    def test_infinite_state_is_valid_json(self):
+        result = subprocess.run(["bash", str(ROOT / "bin/rice-infinite"), "state"], env=self.env,
+                                capture_output=True, text=True, check=True)
+        state = json.loads(result.stdout)
+        self.assertIn("daemon", state)
+        self.assertIn("devices", state)
+        self.assertNotIn("nixos", state)
+
+    def test_security_install_command_uses_pacman(self):
+        module = runpy.run_path(str(ROOT / "bin/rice-security"))
+        self.assertEqual(module["install_cmd"](), "sudo pacman -S --needed clamav && sudo freshclam")
+
+    def test_waybar_removal_and_theme_migration(self):
+        distro = (ROOT / "install/lib/distro.sh").read_text()
+        self.assertNotIn(" waybar ", distro)
+        self.assertNotIn("Use Waybar instead", (ROOT / "quickshell/rice-settings/BarPage.qml").read_text())
+        old = (ROOT / "config/matugen/config.toml").read_text().replace(
+            "[templates.rice_colors]\ninput_path = '~/.config/matugen/templates/rice-colors.css'\n"
+            "output_path = '~/.config/rice/colors.css'",
+            "[templates.waybar]\ninput_path = '~/.config/matugen/templates/waybar.css'\n"
+            "output_path = '~/.config/waybar/colors.css'\n"
+            "post_hook = 'setsid -f $HOME/.local/bin/waybar-reload'")
+        config = self.base / "matugen.toml"
+        config.write_text(old)
+        result = subprocess.run(["python3", str(ROOT / "install/lib/migrate-colors.py"), str(config)],
+                                capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, (ROOT / "config/matugen/config.toml").read_text())
+        config.write_text(old.replace("waybar-reload'", "custom-hook'"))
+        result = subprocess.run(["python3", str(ROOT / "install/lib/migrate-colors.py"), str(config)],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_old_disabled_bar_is_not_used_to_launch_waybar(self):
+        config = self.home / ".config/rice/bar.json"
+        config.parent.mkdir(parents=True)
+        config.write_text('{"enabled": false, "v": 2, "music_added": true}')
+        script = ROOT / "bin/rice-bar"
+        result = subprocess.run(["python3", str(script), "enabled"], env=self.env, capture_output=True)
+        self.assertEqual(result.returncode, 0)
+        result = subprocess.run(["python3", str(script), "set", "enabled", "off"], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        subprocess.run(["python3", str(script), "migrate"], env=self.env, capture_output=True, check=True)
+        self.assertTrue(json.loads(config.read_text())["enabled"])
+
     def test_dry_run_preserves_home(self):
         self.setup_git()
         kept = self.home / ".cache/rice/kept-edits"

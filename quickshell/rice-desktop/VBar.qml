@@ -36,7 +36,7 @@ PanelWindow {
     // the edge it sits on now. A move to the other edge (or a new style) plays out: it slides away, changes, slides back
     readonly property bool wantRight: bc.position === "right"
     property bool atRight: false
-    readonly property bool on: bc.enabled !== false && (bc.position === "left" || bc.position === "right")
+    readonly property bool on: bc.position === "left" || bc.position === "right"
     // styles, like the top bar: flat (the whole edge), island (one pill), islands (a pill for each zone: top, middle,
     // bottom), pills (a pill for each module), dynamic (islands in the Material colors of your theme). notch has no
     // edge to grow out of standing up: islands

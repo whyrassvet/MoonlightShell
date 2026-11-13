@@ -2,7 +2,7 @@ import Quickshell
 import Quickshell.Wayland
 import QtQuick
 
-// Audio bars that grow away from the Waybar edge (down from a top bar, up from a
+// Audio bars that grow away from the panel edge (down from a top bar, up from a
 // bottom bar). Bottom layer, never takes input.
 PanelWindow {
     screen: Mon.screen

@@ -29,9 +29,7 @@ HOME = os.path.expanduser("~")
 USER = os.environ.get("USER", "")
 CFG = HOME + "/.config/rice/cursor.json"
 CACHE = HOME + "/.cache/rice/cursors"
-DIRS = [HOME + "/.local/share/icons", HOME + "/.icons", "/usr/share/icons", "/usr/local/share/icons",
-        "/run/current-system/sw/share/icons", HOME + "/.nix-profile/share/icons",
-        "/etc/profiles/per-user/%s/share/icons" % USER]
+DIRS = [HOME + "/.local/share/icons", HOME + "/.icons", "/usr/share/icons", "/usr/local/share/icons"]
 ROLES = {
     "default": ["left_ptr", "default", "arrow"],
     "pointer": ["pointer", "hand2", "pointing_hand", "hand1"],

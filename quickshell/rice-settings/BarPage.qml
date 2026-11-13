@@ -318,13 +318,6 @@ Item {
                 onToggled: function(x) { page.setv("seconds", x ? "on" : "off") }
             }
 
-            T { kind: "title"; text: I18n.t("Old bar"); font.pixelSize: 16; font.bold: true; topPadding: 10 }
-            ToggleRow {
-                label: I18n.t("Use Waybar instead")
-                desc: I18n.t("Go back to the old Waybar if the DarkShadow bar gives you trouble. Waybar needs to be installed")
-                checked: page.v("enabled", true) !== true
-                onToggled: function(x) { Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-bar\" " + (x ? "off" : "on")]); page.ctl.status = x ? I18n.t("Waybar") : I18n.t("DarkShadow bar"); refresh.restart() }
-            }
         }
     }
 }

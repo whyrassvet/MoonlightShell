@@ -9,7 +9,7 @@ command -v gsettings >/dev/null 2>&1 && theme="$(gsettings get org.gnome.desktop
 
 roots=("$HOME/.local/share/icons" "$HOME/.icons")
 IFS=: read -r -a dd <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-for d in "${dd[@]}" /run/current-system/sw/share "$HOME/.nix-profile/share" /usr/share; do
+for d in "${dd[@]}" /usr/share; do
   [ -n "$d" ] && roots+=("$d/icons")
 done
 themes=()

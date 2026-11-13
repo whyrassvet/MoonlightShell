@@ -2,7 +2,7 @@
 
 - require("x") lines whose x.lua does not exist here are commented out (instead of breaking the config)
 - values that newer Hyprland versions reject are clamped (shadow render_power 1..4)
-- V3.17: the Hyprland autostart starts the DarkShadow bar (rice-bar start: Waybar only if you switched it off) and
+- V3.17: migrate the old bar autostart and
   ALT + Space opens the DarkShadow Launcher (rice-launch: Rofi if you chose Rofi). A copy of the file is kept next to it
 Prints one line per change. Safe to run many times.
 """

@@ -38,7 +38,7 @@ GAMING = HYPR + "/rice-gaming.lua"
 BLUR_LUA = HYPR + "/rice-hotcorner.lua"
 KEYS_LUA = HYPR + "/rice-keys.lua"
 HLUA = HYPR + "/hyprland.lua"
-WAYBAR_COLORS = HOME + "/.config/waybar/colors.css"
+WAYBAR_COLORS = HOME + "/.config/rice/colors.css"
 
 
 def xdg_dir(name, fallback):

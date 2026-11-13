@@ -75,7 +75,7 @@ FloatingWindow {
     Connections { target: I18n; function onLangChanged() { win.searchIndex = [] } }
     readonly property var synonyms: ({
         canvas: ["infinite"], zoom: ["infinite", "zoom"], endless: ["infinite"], infinity: ["infinite"],
-        bar: ["waybar", "bar"], colour: ["color"], colors: ["color", "theme", "scheme"],
+        bar: ["bar"], colour: ["color"], colors: ["color", "theme", "scheme"],
         transparent: ["opacity", "transparency"], transparency: ["opacity", "transparency"], seethrough: ["opacity"],
         round: ["rounding", "radius", "round"], corners: ["rounding", "corner"], lock: ["lock", "idle"],
         sound: ["sound", "sfx", "volume"], sounds: ["sound", "sfx"], sfx: ["sound", "sfx"], music: ["music", "welcome"],
@@ -194,7 +194,6 @@ FloatingWindow {
                 ' SequentialAnimation on opacity { running: true; NumberAnimation { to: 1; duration: 220 } PauseAnimation { duration: 500 } NumberAnimation { to: 0.35; duration: 260 } NumberAnimation { to: 1; duration: 260 } PauseAnimation { duration: 500 } NumberAnimation { to: 0; duration: 600 } ScriptAction { script: destroy() } } }', it, "searchFlash")
         }
     }
-    readonly property string presetTool: home + "/.local/bin/waybar-preset"
     property int page: 0
     // rice-settings PAGE: open on that page (the Settings card of the dashboard uses it)
     Process {
@@ -208,11 +207,8 @@ FloatingWindow {
             }
         }
     }
-    property var presets: []
-    property var st: ({})
     property string status: ""
     property string colorMode: "auto"
-    property alias stateTimer: stateTimer
     property var dst: ({ widgets: {}, clock: {}, dock: {}, lock: {} })
     property string osName: "Linux"
     property var osIds: ["linux"]
@@ -495,47 +491,12 @@ FloatingWindow {
         hrun([k === "enabled" ? "anim-enabled" : "anim-speed", k === "enabled" ? (v ? "on" : "off") : v], "Applied")
     }
 
-    function setSt(key, value) {
-        const s = Object.assign({}, st)
-        s[key] = value
-        st = s
-    }
-
-    function run(args) {
-        Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/waybar-set\" \"$@\" && \"$HOME/.local/bin/waybar-reload\"", "_"].concat(args.map(a => String(a))))
-        status = "Applied"
-        stateTimer.restart()
-    }
-
-    function toggleModule(name, on) {
-        setSt(name, on)
-        run(["toggle", name, on ? "on" : "off"])
-    }
-
     function setColorMode(m) {
         colorMode = m
         Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-colors\" mode \"$1\"", "_", m])
         let nm = m
         for (let i = 0; i < schemes.length; i++) if (schemes[i].key === m) nm = schemes[i].name
         status = "Colors: " + nm + " (applying...)"
-    }
-
-    Process {
-        id: lister
-        command: ["bash", "-c", "ls -1 \"$HOME/.config/waybar-presets\" 2>/dev/null | grep -v '^_'"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: win.presets = text.split("\n").map(s => s.trim()).filter(s => s.length > 0)
-        }
-    }
-
-    Process {
-        id: stateProc
-        command: ["bash", "-c", "\"$HOME/.local/bin/waybar-set\" state"]
-        running: true
-        stdout: StdioCollector {
-            onStreamFinished: { try { win.st = JSON.parse(text) } catch (e) { } }
-        }
     }
 
     property var schemes: []
@@ -575,12 +536,6 @@ FloatingWindow {
     }
 
     Timer { id: hrefresh; interval: 800; onTriggered: hstate.running = true }
-
-    Timer {
-        id: stateTimer
-        interval: 900
-        onTriggered: { lister.running = true; stateProc.running = true }
-    }
 
     Rectangle {
         id: card
@@ -1032,7 +987,7 @@ FloatingWindow {
     }
 }
 
-// ---------- during the tour: the whole screen goes dark (wallpaper, Waybar, widgets), only Settings stays lit ----------
+// ---------- during the tour: the whole screen goes dark, only Settings stays lit ----------
 PanelWindow {
     id: dimWin
     readonly property bool want: win.tourOn

@@ -477,8 +477,8 @@ Item {
                     font.pixelSize: 12
                     color: M3.inkDim
                     text: page.ppInstalled
-                        ? I18n.t("power-profiles-daemon is installed but not running. Turn it on (it asks for your password); on NixOS: services.power-profiles-daemon.enable = true.")
-                        : I18n.t("Power modes need power-profiles-daemon, and it is not running on this computer. Install it and turn it on: sudo systemctl enable --now power-profiles-daemon (on NixOS: services.power-profiles-daemon.enable = true).")
+                        ? I18n.t("power-profiles-daemon is installed but not running. Turn it on (it asks for your password).")
+                        : I18n.t("Power modes need power-profiles-daemon. Install it and turn it on: sudo systemctl enable --now power-profiles-daemon.")
                 }
                 Btn {
                     id: startBtn
@@ -579,15 +579,6 @@ Item {
                 }
             }
 
-            ToggleRow {
-                label: I18n.t("Bar transparency")
-                desc: I18n.t("Translucent bar with blur; off makes it solid")
-                checked: page.ctl.st.transparent === true
-                onToggled: function(v) {
-                    page.ctl.setSt("transparent", v)
-                    page.ctl.run(["transparency", v ? "on" : "off"])
-                }
-            }
             ToggleRow {
                 label: I18n.t("Window blur")
                 desc: I18n.t("Blur behind the bar, notifications and see-through windows")

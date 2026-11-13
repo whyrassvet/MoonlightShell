@@ -10,7 +10,7 @@ Singleton {
     property string seed: "#9ec9bd"
     Process {
         running: true
-        command: ["bash", "-c", "sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/waybar/colors.css\" 2>/dev/null | head -1"]
+        command: ["bash", "-c", "sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/rice/colors.css\" 2>/dev/null | head -1"]
         stdout: StdioCollector { onStreamFinished: { const c = text.trim(); if (/^#[0-9a-fA-F]{6}$/.test(c)) m.seed = c } }
     }
 

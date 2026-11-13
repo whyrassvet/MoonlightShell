@@ -113,16 +113,8 @@ def spawn(cmd):
 def distro():
     s = read("/etc/os-release")
     ids = " ".join(re.findall(r'^(?:ID|ID_LIKE)="?([^"\n]*)"?', s, re.M)).lower()
-    if "nixos" in ids:
-        return "nixos"
     if "arch" in ids or "cachyos" in ids:
         return "arch"
-    if "fedora" in ids or "rhel" in ids:
-        return "fedora"
-    if "debian" in ids or "ubuntu" in ids:
-        return "debian"
-    if "void" in ids.split():
-        return "void"
     return "other"
 
 
@@ -637,10 +629,6 @@ def apply_all(c, force_fetch=False):
 
 # ---------------------------------------------------------------- install / open
 
-PKGS = {"arch": {"wezterm": "wezterm", "ghostty": "ghostty"}, "void": {"fish": "fish-shell"},
-        "fedora": {"ghostty": "ghostty", "wezterm": "wezterm"}}
-
-
 def term_cmd(script):
     """run a little shell script in your terminal; it waits for Enter at the end"""
     s = script + '\necho; read -r -p "Press Enter to close " _'
@@ -648,23 +636,9 @@ def term_cmd(script):
 
 
 def install(name):
-    d = distro()
     if name not in [x["id"] for x in SHELLS + TERMS]:
         sys.exit("unknown: " + name)
-    pkg = PKGS.get(d, {}).get(name, name)
-    if d == "arch":
-        s = 'echo "Installing %s ..."; sudo pacman -S --needed %s' % (name, pkg)
-    elif d == "fedora":
-        s = 'echo "Installing %s ..."; sudo dnf install -y %s' % (name, pkg)
-    elif d == "debian":
-        s = 'echo "Installing %s ..."; sudo apt install -y %s' % (name, pkg)
-    elif d == "void":
-        s = 'echo "Installing %s ..."; sudo xbps-install -y %s' % (name, pkg)
-    elif d == "nixos":
-        s = ('echo "On NixOS, add %s to your configuration:"; echo; echo "  environment.systemPackages = [ pkgs.%s ];"; '
-             'echo; echo "then: sudo nixos-rebuild switch"' % (name, pkg))
-    else:
-        s = 'echo "Install %s with your package manager."' % name
+    s = 'echo "Installing %s ..."; sudo pacman -S --needed %s' % (name, name)
     spawn(term_cmd(s))
     print("Installing %s in a terminal" % name)
 

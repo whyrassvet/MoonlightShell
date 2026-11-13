@@ -130,7 +130,7 @@ ShellRoot {
     Process {
         id: cfgProc
         // desktop.json, then "@@flat" while rice-effects has blur and transparency off
-        command: ["bash", "-c", "cat \"$HOME/.config/rice/desktop.json\" 2>/dev/null; [ -e \"$HOME/.cache/rice/flat\" ] && printf '@@flat'; [ -e \"$HOME/.cache/rice/lite\" ] && printf '@@lite'; printf '@@accent'; sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/waybar/colors.css\" 2>/dev/null | head -1"]
+        command: ["bash", "-c", "cat \"$HOME/.config/rice/desktop.json\" 2>/dev/null; [ -e \"$HOME/.cache/rice/flat\" ] && printf '@@flat'; [ -e \"$HOME/.cache/rice/lite\" ] && printf '@@lite'; printf '@@accent'; sed -n 's/^@define-color accent *\\(#[0-9a-fA-F]\\{6\\}\\).*/\\1/p' \"$HOME/.config/rice/colors.css\" 2>/dev/null | head -1"]
         running: true
         stdout: StdioCollector {
             onStreamFinished: {

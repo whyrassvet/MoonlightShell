@@ -28,7 +28,7 @@ SWCSS = SW + "/style.css"
 HYPR = HOME + "/.config/hypr"
 LUA = HYPR + "/rice-notify.lua"
 HLUA = HYPR + "/hyprland.lua"
-WAYBAR_COLORS = HOME + "/.config/waybar/colors.css"
+WAYBAR_COLORS = HOME + "/.config/rice/colors.css"
 BEGIN, END = "/* rice-notify */", "/* end-rice-notify */"
 
 DEFAULTS = {

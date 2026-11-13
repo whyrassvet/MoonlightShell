@@ -11,7 +11,7 @@
 
 "Flat" (no blur, no transparency) is on when Lite is on, or when gaming mode is on and
 "Keep blur & transparency" is off. It reaches:
-  Hyprland (blur off, every window opaque), kitty (background_opacity 1), Waybar, the launcher,
+  Hyprland (blur off, every window opaque), kitty (background_opacity 1), the launcher,
   notifications (swaync), the dashboard, the hot corner, the dock and the desktop widgets.
 Gaming mode also turns off animations, shadows and gaps (unless you keep them), can turn on
 Do Not Disturb, and stops the dashboard from opening at the bottom edge.
@@ -201,7 +201,7 @@ def apply(c, reload_hypr=True, quiet=False):
     wire_hypr()
     kitty(fl)
     # the parts that draw their own see-through backgrounds
-    for cmd in ([BIN + "/waybar-set", "reapply"], [BIN + "/rice-notify", "apply"], [BIN + "/rice-rofi", "apply"]):
+    for cmd in ([BIN + "/rice-notify", "apply"], [BIN + "/rice-rofi", "apply"]):
         if os.path.exists(cmd[0]):
             q(cmd, timeout=20)
     # the dashboard reads its settings again when this file changes

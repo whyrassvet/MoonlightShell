@@ -10,7 +10,7 @@
 #                                       pixels, SUPER + ALT sensitivity (0.3-3), dir (1: the windows follow the mouse,
 #                                       2: reversed), push (1: SUPER + drag at the edge pushes the others, 0: no)
 #   rice-infinite daemon | daemon-stop  (Hyprland runs these) rice-canvasd, for SUPER + ALT + mouse
-#   rice-infinite allow                 join the input group (asks for your password; on NixOS: what to add)
+#   rice-infinite allow                 join the input group (asks for your password)
 #   rice-infinite check                 what rice-canvasd finds (keyboards, mice, may it read them)
 c="${XDG_CONFIG_HOME:-$HOME/.config}/rice"
 st="$c/infinite.state" conf="$c/infinite.conf"
@@ -53,14 +53,6 @@ case "$1" in
     exec "$HOME/.local/bin/rice-canvasd" --check ;;
   allow)
     # what Settings > Allow runs in a terminal
-    if grep -qs '^ID=nixos' /etc/os-release; then
-      echo "NixOS keeps the groups in your configuration. Add \"input\" to your user in /etc/nixos/configuration.nix:"
-      echo
-      echo "  users.users.$USER.extraGroups = [ \"input\" ];      (next to the groups you already have)"
-      echo
-      echo "then run:  sudo nixos-rebuild switch   and log out and back in."
-      exit 0
-    fi
     echo "SUPER + ALT + mouse reads the mouse and the keyboard directly. For that your user joins the 'input' group."
     echo "(Programs you run can then read the keyboard and the mouse too.)"
     echo
@@ -74,12 +66,12 @@ case "$1" in
       "${kt:-$dt}" "${kh:-SUPER + ALT}" "${kg:-$dg}" "${kz:-CTRL}" "$(niri && echo true || echo false)")
         d="${XDG_RUNTIME_DIR:-/tmp}/rice-canvasd"
     run=false; [ -f "$d.pid" ] && kill -0 "$(cat "$d.pid")" 2>/dev/null && run=true
-    printf '{'"$keys"'"hypr":%s,"on":%s,"zoom":%s,"step":%s,"min":%s,"pan":%s,"speed":%s,"dir":%s,"push":%s,"input":%s,"group":%s,"loaded":%s,"nixos":%s,"daemon":%s,"devices":%s}\n' \
+    printf '{'"$keys"'"hypr":%s,"on":%s,"zoom":%s,"step":%s,"min":%s,"pan":%s,"speed":%s,"dir":%s,"push":%s,"input":%s,"group":%s,"loaded":%s,"daemon":%s,"devices":%s}\n' \
       "$(hypr && echo true || echo false)" "$([ "$on" = 1 ] && echo true || echo false)" "${z:-1}" \
       "$(val step "$conf" | grep . || echo 0.12)" "$(val min "$conf" | grep . || echo 0.2)" "$(val pan "$conf" | grep . || echo 180)" "$(val speed "$conf" | grep . || echo 1.0)" "$(val dir "$conf" | grep . || echo 1)" "$(val push "$conf" | grep . || echo 1)" \
       "$(for e in /dev/input/event*; do [ -r "$e" ] && { echo true; exit 0; }; done; echo false)" \
       "$(id -nG 2>/dev/null | tr ' ' '\n' | grep -qx input && echo true || echo false)" \
       "$([ -f "$HOME/.config/hypr/rice-infinite.lua" ] && echo true || echo false)" \
-      "$(grep -qs '^ID=nixos' /etc/os-release && echo true || echo false)" "$run" "$(cat "$d.json" 2>/dev/null | grep . || echo null)" ;;
+      "$run" "$(cat "$d.json" 2>/dev/null | grep . || echo null)" ;;
   *) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

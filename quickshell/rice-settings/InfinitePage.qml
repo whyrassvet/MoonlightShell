@@ -151,8 +151,7 @@ Item {
                 T { width: parent.width; wrapMode: Text.WordWrap; font.pixelSize: 12; color: M3.inkDim
                     text: cv.ready ? (cv.dv.keyboards + " " + I18n.t("keyboard(s)") + " · " + cv.dv.mice + " " + I18n.t("mouse / mice"))
                         : (cv.denied ? (page.st.group ? I18n.t("You are in the input group now; it counts after the next login.")
-                              : (page.st.nixos ? I18n.t("NixOS: add \"input\" to your user's extraGroups in configuration.nix, run sudo nixos-rebuild switch, then log in again. Allow shows the line.")
-                                  : I18n.t("Your user joins the input group (your password, once), then log in again. Programs you run can then read the keyboard and the mouse too.")))
+                              : I18n.t("Your user joins the input group (your password, once), then log in again. Programs you run can then read the keyboard and the mouse too."))
                         : (page.st.daemon ? I18n.t("Plug in a mouse, or check with: rice-infinite check") : I18n.t("It starts with Hyprland. Start it now:"))) }
             }
             Btn {

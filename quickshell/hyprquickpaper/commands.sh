@@ -10,7 +10,7 @@ case "${img,,}" in
   *.mp4|*.webm|*.mkv|*.mov|*.avi|*.m4v) exec "$HOME/.local/bin/rice-walls" set "$img" ;;
 esac
 
-mkdir -p "$HOME/.cache/rice" "$HOME/.config/waybar"
+mkdir -p "$HOME/.cache/rice" "$HOME/.config/rice"
 log="$HOME/.cache/rice/colors.log"
 : >"$log"
 say() { echo "$(date '+%H:%M:%S') $*" >>"$log"; }
@@ -49,14 +49,12 @@ im=""
 if command -v magick >/dev/null 2>&1; then im=magick
 elif command -v convert >/dev/null 2>&1; then im=convert
 fi
-sat=50; lum=50
+sat=50
 if [ -n "$im" ]; then
   # how colorful it is: the chroma (HCL), not the HSL saturation. HSL calls a near-black pixel with a hint of blue
   # "saturated", so a black or white wallpaper with a few stars came out pink or blue before
-  s=$("$im" -define jpeg:size=200x200 "$src[0]" -resize 100x100! -colorspace HCL -channel G -separate +channel -format "%[fx:mean*100]" info: 2>>"$log")
-  l=$("$im" -define jpeg:size=200x200 "$src[0]" -resize 100x100! -colorspace Gray -format "%[fx:mean*100]" info: 2>>"$log")
+  s=$("$im" -define jpeg:size=200x200 "${src}[0]" -resize 100x100! -colorspace HCL -channel G -separate +channel -format "%[fx:mean*100]" info: 2>>"$log")
   [[ "$s" =~ ^[0-9.]+$ ]] && sat="$s"
-  [[ "$l" =~ ^[0-9.]+$ ]] && lum="$l"
 else
   say "ImageMagick is missing: grey wallpapers are not detected (install imagemagick)"
 fi
@@ -65,7 +63,7 @@ mode="$(cat "$HOME/.config/rice/color-mode" 2>/dev/null)"
 scheme=""
 navy=""
 case "$mode" in
-  grey) sat=0; lum=50 ;;
+  grey) sat=0 ;;
   navy) navy=1 ;;
   ""|auto) ;;
   *) scheme="$("$HOME/.local/bin/rice-colors" scheme "$mode" 2>/dev/null)" ;;
@@ -73,22 +71,17 @@ esac
 
 if [ -n "$scheme" ]; then
   # named color scheme from Settings > Home > Colors: "<matugen type> <seed> <workspace marker>"
-  read -r stype seed ws <<<"$scheme"
+  read -r stype seed _ <<<"$scheme"
   cmd=(matugen color hex "$seed" --type "$stype")
 elif [ -n "$navy" ]; then
-  ws='#8a8a8a'
   cmd=(matugen color hex "#1a2a5e")
 elif awk "BEGIN{exit !($sat < 7)}"; then
   # black, white or grey: everything in grey too (no made-up color), the same for dark and light pictures
-  ws='#8a8a8a'
   cmd=(matugen color hex "#808080" --type scheme-monochrome)
   say "a grey wallpaper (chroma $sat): monochrome colors"
 else
-  ws='@on_accent'
   cmd=(matugen image "$src" --source-color-index 0)
 fi
-
-printf '@define-color ws_active %s;\n' "$ws" > "$HOME/.config/waybar/ws-active.css"
 
 mat="$(command -v matugen 2>/dev/null)"
 [ -z "$mat" ] && [ -x "$HOME/.local/bin/matugen" ] && mat="$HOME/.local/bin/matugen"
@@ -96,7 +89,7 @@ if [ -z "$mat" ]; then
   say "matugen is not installed: the colors cannot follow the wallpaper"
   if [ ! -f "$HOME/.cache/rice/colors-told" ]; then
     notify-send -a Wallpaper "Colors need matugen" \
-      "Install the matugen package (NixOS: pkgs.matugen), then pick the wallpaper again." 2>/dev/null
+      "Install the matugen package, then pick the wallpaper again." 2>/dev/null
     : >"$HOME/.cache/rice/colors-told"
   fi
 else

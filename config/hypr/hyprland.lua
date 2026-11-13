@@ -62,7 +62,6 @@ hl.on("hyprland.start", function ()
    hl.exec_cmd("$HOME/.local/bin/rice-notifyd")
    hl.exec_cmd("hypridle")
    hl.exec_cmd("$HOME/.local/bin/border-sync")
-   hl.exec_cmd("$HOME/.local/bin/ws-watch")
  end)
 
 
@@ -426,13 +425,6 @@ hl.layer_rule({
     ignore_alpha = 0.1,
 })
 
-hl.layer_rule({
-    name  = "waybar-blur",
-    match = { namespace = "waybar" },
-    blur = true,
-    ignore_alpha = 0.1,
-})
-
 hl.window_rule({
     name  = "rice-settings",
     match = { title = "^Rice Settings$" },
@@ -455,12 +447,6 @@ hl.layer_rule({
     match = { namespace = "rice-widget" },
     blur = true,
     ignore_alpha = 0.1,
-})
-
-hl.layer_rule({
-    name  = "waybar-slide",
-    match = { namespace = "waybar" },
-    animation = "slide top",
 })
 
 require("hyprland-gui")
@@ -494,7 +480,7 @@ hl.window_rule({
 })
 
 
--- rice-tooltip-blur: blur for waybar tooltips (popups)
+-- Blur for tooltips and popups.
 pcall(hl.config, { decoration = { blur = { popups = true, popups_ignorealpha = 0.2 } } })
 
 require("rice-keys")

@@ -5,10 +5,10 @@
 set -Euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-TOOLS=(rice-effects rice-run rice-busy hypr-set waybar-set waybar-preset waybar-reload waybar-autohide font-set desktop-set rice-settings rice-settings-size
+TOOLS=(rice-effects rice-run rice-busy hypr-set font-set desktop-set rice-settings rice-settings-size
        rice-colors rice-welcome rice-wallpaper rice-rofi rice-notify rice-lock rice-fonts rice-hotcorner
        rice-desktop rice-stats rice-sysline rice-nowplaying rice-weather rice-cava rice-media rice-cursor rice-update rice-ws-watch rice-calendar rice-sound rice-sfx rice-services rice-battery rice-todo rice-dashboard border-sync logout)
-CONFIG_DIRS=(hypr waybar waybar-presets swaync rofi matugen kitty fish fastfetch)    # folders from ~/.config to publish
+CONFIG_DIRS=(hypr swaync rofi matugen kitty fish fastfetch)    # folders from ~/.config to publish
 SKIP_QS=(cache thumbs)                                  # quickshell folders that are not apps
 # small images (bar icons) are kept; anything over 1 MB is skipped below
 EXCLUDE=(ui.json 'config.jsonc.save*' '*.bak*' '*.save*' '.first-backup' '*.qslog' '*.log'
@@ -58,15 +58,14 @@ for d in "${CONFIG_DIRS[@]}"; do
   echo "config/$d: $c files"
 done
 
-# your Settings choices (Waybar look, dashboard, widgets, hot corner, notifications, lock screen, rofi,
+# your Settings choices (dashboard, widgets, hot corner, notifications, lock screen, rofi,
 # fonts, cursor, blur & gaming mode). Gaming mode on/off itself is not saved (it is per computer).
 rm -rf "${HERE:?}/settings"
-mkdir -p "$HERE/settings/rice" "$HERE/settings/waybar"
+mkdir -p "$HERE/settings/rice"
 c=0
 for f in "${SETTINGS_RICE[@]}"; do
   [ -f "$HOME/.config/rice/$f" ] && { tmpl "$HOME/.config/rice/$f" "$HERE/settings/rice/$f"; c=$((c + 1)); }
 done
-[ -f "$HOME/.config/waybar/ui.json" ] && { tmpl "$HOME/.config/waybar/ui.json" "$HERE/settings/waybar/ui.json"; c=$((c + 1)); }
 # the widget editor is never saved open
 [ -f "$HERE/settings/rice/desktop.json" ] && python3 - "$HERE/settings/rice/desktop.json" <<'PY'
 import json, sys
@@ -78,7 +77,7 @@ if c.get("editing"):
 PY
 echo "settings: $c files"
 
-# every script in ~/.local/bin that a config, widget or script calls (for example ws-state from Waybar)
+# every script in ~/.local/bin that a config, widget or script calls
 echo "--- scripts used by your configs"
 # shellcheck disable=SC2016
 for _ in 1 2 3; do   # a few rounds: found scripts can call other scripts
