@@ -3,10 +3,8 @@ local bin = os.getenv("HOME") .. "/.local/bin/"
 
 hl.unbind("SUPER + F")
 hl.bind("SUPER + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
-hl.bind("SUPER + T", function()
-    hl.dispatch(hl.dsp.window.fullscreen({ action = "unset" }))
-    hl.dispatch(hl.dsp.window.float({ action = "unset" }))
-end)
+hl.unbind("SUPER + T")
+hl.bind("SUPER + T", hl.dsp.window.float({ action = "toggle" }))
 
 -- wallpaper picker: unbind first so only ONE menu opens even if another config also binds SUPER + W
 hl.unbind("SUPER + W")
@@ -36,7 +34,7 @@ hl.bind("SUPER + ALT + D",     hl.dsp.exec_cmd(bin .. "rice-dashboard open"))
 hl.bind("SUPER + G",           hl.dsp.exec_cmd(bin .. "rice-gamebar"))
 -- the control center: switches, sliders, music and notifications
 hl.bind("SUPER + N",           hl.dsp.exec_cmd(bin .. "rice-cc"))
--- the clipboard history (float / tile moved to SUPER + SHIFT + V)
+-- the clipboard history (float / tile is on SUPER + T)
 pcall(hl.unbind, "SUPER + V")
 hl.bind("SUPER + V",           hl.dsp.exec_cmd(bin .. "rice-clip toggle"))
 

@@ -24,7 +24,7 @@ RK.actions = {
     dashboard = { "SUPER + ALT + D",   exec(BIN .. "rice-dashboard open") },
     lock      = { "SUPER + L",         exec(BIN .. "rice-lock now") },
     close     = { "SUPER + Q",         function() return hl.dsp.window.close() end },
-    float     = { "SUPER + SHIFT + V", function() return hl.dsp.window.float({ action = "toggle" }) end },
+    float     = { "SUPER + T",         function() return hl.dsp.window.float({ action = "toggle" }) end },
     clipboard = { "SUPER + V",         exec(BIN .. "rice-clip toggle") },
     shot      = { "Print",             exec(BIN .. "rice-hotcorner shot focused") },
     shotfull  = { "SHIFT + Print",     exec(BIN .. "rice-hotcorner shot full") },

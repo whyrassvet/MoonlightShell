@@ -75,7 +75,8 @@ Use the Settings app to personalize the bar, wallpaper, colors, animations and d
 | `SUPER + W` | Open wallpapers |
 | `SUPER + N` | Open the control center |
 | `SUPER + F` | Toggle fullscreen |
-| `SUPER + T` | Return a window to tiling |
+| `SUPER + T` | Toggle the active window between floating and tiling |
+| `SUPER + SHIFT + T` | Toggle column tabs (niri) |
 | `SUPER + ALT + F` | Toggle Infinite Desktop |
 | `Print` | Capture the focused monitor |
 

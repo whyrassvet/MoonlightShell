@@ -240,14 +240,14 @@ def default_binds(f, term, files):
         ("Mod+Q", 'repeat=false hotkey-overlay-title="Close the window"', "close-window;"),
         ("Mod+C", "repeat=false", "close-window;"),
         ("Mod+V", 'repeat=false hotkey-overlay-title="Clipboard"', run(b + "rice-clip", "toggle")),
-        ("Mod+Shift+V", 'hotkey-overlay-title="Float / tile the window"', "toggle-window-floating;"),
+        ("Mod+T", 'hotkey-overlay-title="Float / tile the window"', "toggle-window-floating;"),
         ("Mod+Ctrl+V", "", "switch-focus-between-floating-and-tiling;"),
         ("Mod+F", 'hotkey-overlay-title="Maximize the column"', "maximize-column;"),
         ("Mod+Shift+F", 'hotkey-overlay-title="Fullscreen"', "fullscreen-window;"),
         ("Mod+Ctrl+F", "", "expand-column-to-available-width;"),
         ("Mod+M", "", "maximize-window-to-edges;" if f.max_to_edges else ""),
         ("Mod+Shift+C", "", "center-column;"),
-        ("Mod+T", 'hotkey-overlay-title="Tabs in this column"', "toggle-column-tabbed-display;"),
+        ("Mod+Shift+T", 'hotkey-overlay-title="Tabs in this column"', "toggle-column-tabbed-display;"),
         ("Mod+R", "", "switch-preset-column-width;"),
         ("Mod+Ctrl+R", "", "reset-window-height;"),
         ("Mod+Minus", "", 'set-column-width "-10%";'),
@@ -327,7 +327,7 @@ def default_binds(f, term, files):
 ACTION_KEYS = {
     "terminal": "Mod+Return", "launcher": "Mod+D", "launcher2": "Alt+Space", "settings": "Mod+U", "wallpaper": "Mod+W",
     "quick": "Mod+A", "cc": "Mod+N", "gamebar": "Mod+G", "dashboard": "Mod+Alt+D", "lock": "Mod+L", "close": "Mod+Q",
-    "float": "Mod+Shift+V", "clipboard": "Mod+V", "shot": "Print", "shotfull": "Shift+Print", "record": "Mod+Shift+R", "widgets": "Mod+Alt+W",
+    "float": "Mod+T", "clipboard": "Mod+V", "shot": "Print", "shotfull": "Shift+Print", "record": "Mod+Shift+R", "widgets": "Mod+Alt+W",
     "taskview": "Mod+Tab", "switcher": "Alt+Tab",
 }
 
