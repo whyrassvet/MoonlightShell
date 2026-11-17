@@ -45,7 +45,9 @@ pcall(hl.bind, "ALT + SHIFT + TAB", hl.dsp.exec_cmd(bin .. "rice-taskview back")
 -- letting go of ALT goes to the window picked in the switcher (written straight to the file: no program starts)
 local taskfile = os.getenv("HOME") .. "/.cache/rice/taskview-open"
 local commit = "sh -c 'printf \"%s commit\\n\" \"$(date +%s.%N)\" > " .. taskfile .. "'"
-pcall(hl.bind, "ALT + ALT_L", hl.dsp.exec_cmd(commit), { release = true })
+-- non_consuming: the Alt press must still reach the app (games draw their alt-overlays on a real
+-- Alt keypress: tower range, camp boxes, the top bar in Dota 2); only the release confirms the pick.
+pcall(hl.bind, "ALT + ALT_L", hl.dsp.exec_cmd(commit), { release = true, non_consuming = true })
 -- SUPER alone (pressed and let go) opens the Task view, when it is on (Settings > Desktop > Task view)
 RiceTask = RiceTask or {}
 function RiceTask.super(on)

@@ -447,7 +447,9 @@ PanelWindow {
                         }
                         Image { anchors.centerIn: parent; width: parent.height * 0.4; height: width; sourceSize.width: 128; sourceSize.height: 128
                             source: tv.iconOf(sw.w.cls); visible: !slive.obj || !slive.obj.hasContent; mipmap: true }
-                        MouseArea { anchors.fill: parent; hoverEnabled: true; onEntered: tv.sel = index; onClicked: { tv.sel = index; tv.commit() } }
+                        // Hover must not move the highlight: the strip opens under the pointer, so the tile
+                        // beneath it would steal the selection and Alt + Tab would start in the middle.
+                        MouseArea { anchors.fill: parent; onClicked: { tv.sel = index; tv.commit() } }
                     }
                     Row {
                         anchors.horizontalCenter: parent.horizontalCenter

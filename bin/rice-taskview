@@ -160,22 +160,22 @@ def main(a):
         if niri():
             run(["niri", "msg", "action", "focus-window", "--id", a[2]])
         else:
-            run(["hyprctl", "dispatch", "focuswindow", "address:" + a[2]])
+            run(["hyprctl", "dispatch", 'hl.dsp.focus({ window = "address:%s" })' % a[2]])
     elif cmd == "close" and len(a) > 2:
         if niri():
             run(["niri", "msg", "action", "close-window", "--id", a[2]])
         else:
-            run(["hyprctl", "dispatch", "closewindow", "address:" + a[2]])
+            run(["hyprctl", "dispatch", 'hl.dsp.window.close({ window = "address:%s" })' % a[2]])
     elif cmd == "move" and len(a) > 3:
         if niri():
             run(["niri", "msg", "action", "move-window-to-workspace", "--window-id", a[2], "--focus", "false", a[3]])
         else:
-            run(["hyprctl", "dispatch", "movetoworkspacesilent", "%s,address:%s" % (a[3], a[2])])
+            run(["hyprctl", "dispatch", 'hl.dsp.window.move({ workspace = "%s", window = "address:%s", follow = false })' % (a[3], a[2])])
     elif cmd == "ws" and len(a) > 2:
         if niri():
             run(["niri", "msg", "action", "focus-workspace", a[2]])
         else:
-            run(["hyprctl", "dispatch", "workspace", a[2]])
+            run(["hyprctl", "dispatch", 'hl.dsp.focus({ workspace = "%s" })' % a[2]])
     elif cmd == "get":
         print(json.dumps(cfg()))
     elif cmd == "set" and len(a) > 3:
