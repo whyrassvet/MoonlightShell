@@ -63,6 +63,19 @@ Choose Hyprland, niri or both in the installer. To preview the plan without inst
 
 The installer saves replaced files in `~/.config/darkshadows-shell-backup-<timestamp>/`. See `./install.sh --help` for options, including `--no-packages`, `--wm=niri` and `--restore`.
 
+### 🔐 Login screen (SDDM)
+
+Moonlight Shell has its own Material 3 SDDM theme in `sddm/moonlight-shell`: your wallpaper and a big clock; press a key and the wallpaper blurs while the login card appears, with your picture, session, keyboard layout, sleep, restart and shut down. It follows your wallpaper, colors, font and language.
+
+If SDDM is installed, a fresh install puts the theme in and makes it the login screen; an update does the same when the theme is not there yet, and refreshes its colors. When an update brings newer theme files, the new theme is put in again (asking for your password). Later you can do the same from **Settings → Idle & Lockscreen → Login screen**, or with the commands below.
+
+```bash
+rice-sddm install   # put the theme in and use it (asks for your password)
+rice-sddm preview   # show it in a window
+rice-sddm sync      # refresh wallpaper, colors and font (done automatically)
+rice-sddm remove    # back to SDDM's own theme
+```
+
 ## 🎨 Make it yours
 
 Use the Settings app to personalize the bar, wallpaper, colors, animations and desktop widgets. Edit mode lets you arrange widgets and adjust the visualizer directly on the desktop.

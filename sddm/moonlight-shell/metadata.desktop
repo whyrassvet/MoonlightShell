@@ -1,0 +1,15 @@
+[SddmGreeterTheme]
+Name=Moonlight Shell
+Description=Material 3 login screen of Moonlight Shell: your wallpaper and its colors
+Author=shadowww-dev
+Copyright=(c) 2026 shadowww-dev, MIT
+License=MIT
+Type=sddm-theme
+Version=1.0
+Website=https://github.com/whyrassvet/MoonlightShell
+MainScript=Main.qml
+ConfigFile=theme.conf
+TranslationsDirectory=translations
+Theme-Id=moonlight-shell
+Theme-API=2.0
+QtVersion=6

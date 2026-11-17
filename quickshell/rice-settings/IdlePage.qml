@@ -452,6 +452,8 @@ Item {
         ToggleRow { label: I18n.t("Notifications"); desc: I18n.t("How many notifications are waiting"); checked: page.v("notifications", true) === true; onToggled: function(x) { page.setv("notifications", x ? "on" : "off") } }
         ToggleRow { label: I18n.t("Weather"); desc: I18n.t("Current weather from wttr.in"); checked: page.v("weather", false) === true; onToggled: function(x) { page.setv("weather", x ? "on" : "off") } }
 
+        LoginScreenCard { ctl: page.ctl }
+
         Row {
             topPadding: 8
             Btn { text: I18n.t("Restore my original files"); onClicked: { Quickshell.execDetached(["bash", "-c", "\"$HOME/.local/bin/rice-lock\" restore"]); page.ctl.status = I18n.t("Original hyprlock/hypridle restored"); refresh.restart() } }

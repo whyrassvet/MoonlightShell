@@ -33,7 +33,7 @@ Item {
         id: saveP
         onExited: function(code) {
             fp.busy = ""
-            if (code === 0) { fp.changed(); fp.hide() }
+            if (code === 0) { fp.changed(); fp.hide(); fp.toLogin() }
         }
     }
     Process {
@@ -50,7 +50,9 @@ Item {
         command: ["zenity", "--file-selection", "--title=" + I18n.t("Choose a profile picture"), "--file-filter=Images | *.png *.jpg *.jpeg *.webp *.PNG *.JPG *.JPEG"]
         stdout: StdioCollector { onStreamFinished: { const p = text.trim(); if (p.length) fp.use(p) } }
     }
-    Process { id: removeP; command: ["bash", "-c", "rm -f \"$HOME/.face\" \"$HOME/.face.icon\""]; onExited: { fp.changed(); fp.hide() } }
+    Process { id: removeP; command: ["bash", "-c", "rm -f \"$HOME/.face\" \"$HOME/.face.icon\""]; onExited: { fp.changed(); fp.hide(); fp.toLogin() } }
+    // the login screen (SDDM) shows the same picture
+    function toLogin() { Quickshell.execDetached(["bash", "-c", "[ -x \"$HOME/.local/bin/rice-sddm\" ] && \"$HOME/.local/bin/rice-sddm\" face"]) }
 
     // the dim behind it: a click there closes it
     Rectangle {

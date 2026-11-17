@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# rice-sddm: Moonlight Shell's login screen for SDDM (Material 3, your wallpaper and its colors).
+#
+#   rice-sddm state          JSON: is SDDM installed, is the theme in, is it the one in use, which display manager runs
+#   rice-sddm install        put the theme in and make it SDDM's theme (asks for your password)
+#   rice-sddm use-sddm       also make SDDM the display manager that starts at boot (asks for your password)
+#   rice-sddm remove         SDDM goes back to its own theme (asks for your password)
+#   rice-sddm sync           your wallpaper, colors, font and picture to the login screen (no password; it runs by
+#                            itself when the wallpaper changes)
+#   rice-sddm face           only your picture (Settings runs it when you pick one)
+#   rice-sddm preview        show the login screen in a window (sddm-greeter test mode)
+#
+# The theme lives in /usr/share/sddm/themes/moonlight-shell. Its user/ folder belongs to you, so the shell can
+# change the wallpaper and colors there without a password; SDDM only reads it.
+set -u
+NAME=moonlight-shell
+THEME="/usr/share/sddm/themes/$NAME"
+CONFD=/etc/sddm.conf.d
+CONF="$CONFD/99-moonlight-shell.conf"
+MAIN=/etc/sddm.conf
+PREV="$CONFD/.moonlight-shell-previous"   # the line of sddm.conf it switched off
+U="$THEME/user"
+repo() { local r; r="$(cat "$HOME/.config/rice/repo" 2>/dev/null)"; [ -d "$r/sddm/$NAME" ] && echo "$r" && return; [ -d "$HOME/moonlight-shell/sddm/$NAME" ] && echo "$HOME/moonlight-shell"; }
+have_sddm() { command -v sddm >/dev/null 2>&1 || [ -x /usr/bin/sddm ]; }
+dm_now() { [ -L /etc/systemd/system/display-manager.service ] || return 0; local l; l="$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null)"; l="${l##*/}"; echo "${l%.service}"; }
+theme_now() {
+  local f v=""
+  # the order SDDM reads them: its own defaults, sddm.conf.d (by name), then sddm.conf, which wins
+  for f in /usr/lib/sddm/sddm.conf.d/*.conf "$CONFD"/*.conf "$MAIN"; do
+    [ -f "$f" ] || continue
+    local x; x="$(awk -F= '/^\[Theme\]/{t=1;next} /^\[/{t=0} t&&$1~/^ *Current *$/{gsub(/^ +| +$/,"",$2); print $2}' "$f" | tail -1)"
+    [ -n "$x" ] && v="$x"
+  done
+  echo "$v"
+}
+sudo_run() {
+  # from Settings (no terminal): pkexec shows a password window; in a terminal: sudo
+  if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then sudo "$@"
+  elif command -v pkexec >/dev/null 2>&1; then pkexec "$@"
+  else sudo "$@"; fi
+}
+pkg_cmd() {
+  . /etc/os-release 2>/dev/null
+  case " ${ID:-} ${ID_LIKE:-} " in
+    *" arch "*|*" cachyos "*|*" endeavouros "*|*" manjaro "*) echo "sudo pacman -S --needed sddm qt6-svg qt6-declarative" ;;
+    *) echo "install the sddm package of your distro" ;;
+  esac
+}
+
+state() {
+  local inst=false cur in_use=false w=false
+  [ -f "$THEME/Main.qml" ] && inst=true
+  cur="$(theme_now)"; [ "$cur" = "$NAME" ] && in_use=true
+  [ -w "$U" ] && w=true
+  # the update brought a newer theme than the one in /usr/share (putting it in again needs the password)
+  local r out=false; r="$(repo)"
+  if [ "$inst" = true ] && [ -n "$r" ]; then
+    for f in "$r/sddm/$NAME"/*.qml "$r/sddm/$NAME/theme.conf" "$r/sddm/$NAME/metadata.desktop"; do
+      [ -f "$f" ] || continue
+      cmp -s "$f" "$THEME/${f##*/}" || out=true
+    done
+  fi
+  printf '{"sddm": %s, "installed": %s, "outdated": '"$out"', "in_use": %s, "theme": "%s", "dm": "%s", "writable": %s, "repo": %s, "pkg": "%s"}\n' \
+    "$(have_sddm && echo true || echo false)" "$inst" "$in_use" "$cur" "$(dm_now)" "$w" \
+    "$([ -n "$(repo)" ] && echo true || echo false)" "$(pkg_cmd | sed 's/"/\\"/g')"
+}
+
+# ---------------- as root (through sudo / pkexec) ----------------
+root_install() {   # root-install SRC USER [use-sddm]
+  local src="$1" user="$2" grp
+  [ "$(id -u)" = 0 ] || { echo "needs root"; exit 1; }
+  [ -f "$src/Main.qml" ] || { echo "no theme in $src"; exit 1; }
+  id "$user" >/dev/null 2>&1 || { echo "no user $user"; exit 1; }
+  grp="$(id -gn "$user")"
+  mkdir -p "$THEME"
+  # the theme files are root's; user/ (wallpaper, colors, font) is yours
+  find "$src" -maxdepth 1 -type f \( -name '*.qml' -o -name '*.desktop' -o -name 'theme.conf' -o -name '*.png' \) -exec install -m 644 {} "$THEME/" \;
+  mkdir -p "$U"
+  chown "$user:$grp" "$U"; chmod 755 "$U"
+  [ -e "$U/theme.conf.user" ] || { printf '[General]\n' >"$U/theme.conf.user"; chown "$user:$grp" "$U/theme.conf.user"; }
+  chmod 644 "$U/theme.conf.user"
+  ln -sfn user/theme.conf.user "$THEME/theme.conf.user"
+  mkdir -p "$CONFD"
+  # another theme in sddm.conf wins over sddm.conf.d (an installed theme often puts itself there): that line is
+  # switched off, and kept, so "Back to SDDM's theme" can put it back
+  # (Current= for the theme, InputMethod= for the on-screen keyboard: the login screen has its own card, and a big
+  # keyboard rising when you click the password is not wanted)
+  if [ -f "$MAIN" ] && grep -qE '^[[:space:]]*(Current|InputMethod)[[:space:]]*=' "$MAIN"; then
+    grep -E '^[[:space:]]*(Current|InputMethod)[[:space:]]*=' "$MAIN" >"$PREV"
+    [ -f "$MAIN.bak-moonlight" ] || cp -f "$MAIN" "$MAIN.bak-moonlight"
+    sed -i -E 's/^([[:space:]]*(Current|InputMethod)[[:space:]]*=.*)$/# (Moonlight Shell login screen: see sddm.conf.d) \1/' "$MAIN"
+  fi
+  printf '# Moonlight Shell: its login screen (rice-sddm remove takes this away)\n[General]\nInputMethod=\n\n[Theme]\nCurrent=%s\n' "$NAME" >"$CONF"
+  if [ "${3:-}" = use-sddm ]; then
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+      systemctl enable --force sddm.service && echo "SDDM starts at the next boot"
+    else
+      echo "Enable SDDM yourself: it starts at boot on this system through its own service script"
+    fi
+  fi
+  echo "installed"
+}
+root_remove() {
+  [ "$(id -u)" = 0 ] || { echo "needs root"; exit 1; }
+  rm -f "$CONF"
+  # the theme sddm.conf had before comes back
+  if [ -f "$PREV" ] && [ -f "$MAIN" ]; then
+    sed -i -E 's/^# \(Moonlight Shell login screen: see sddm.conf.d\) //' "$MAIN"
+    rm -f "$PREV"
+  fi
+  echo "removed (SDDM uses its own theme again)"
+}
+
+# ---------------- as you ----------------
+install() {
+  local r; r="$(repo)"
+  [ -n "$r" ] || { echo "the shell's folder was not found (~/.config/rice/repo)"; exit 1; }
+  have_sddm || echo "SDDM is not installed yet: $(pkg_cmd)"
+  sudo_run "$(readlink -f "$0")" root-install "$r/sddm/$NAME" "$(id -un)" ${1:-} || exit 1
+  sync
+}
+
+# the picture of your wallpaper now (for a live wallpaper: one frame of it)
+wallpaper() {
+  local w
+  w="$(cat "$HOME/.cache/hyprquickpaper-current" 2>/dev/null)"
+  [ -f "$w" ] && { echo "$w"; return; }
+  w="$(awww query 2>/dev/null | sed -n 's/.*image: //p' | head -1)"
+  [ -f "$w" ] || w="$(swww query 2>/dev/null | sed -n 's/.*image: //p' | head -1)"
+  [ -f "$w" ] && echo "$w"
+}
+color() { python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))
+except Exception: print("")' "$HOME/.config/rice/palette.json" "$1"; }
+
+# your picture (Settings > your picture saves ~/.face): to the login screen; none: the first letter of your name
+face_sync() {
+  local im="${1:-}" f face="" out="$U/faces/$(id -un).png"
+  [ -z "$im" ] && { command -v magick >/dev/null 2>&1 && im=magick || { command -v convert >/dev/null 2>&1 && im=convert; }; }
+  mkdir -p "$U/faces"
+  for f in "$HOME/.face" "$HOME/.face.icon" "/var/lib/AccountsService/icons/$(id -un)"; do [ -s "$f" ] && { face="$f"; break; }; done
+  if [ -z "$face" ]; then rm -f "$out"; return 0; fi
+  # written next to it and swapped in, so the login screen never reads half a picture
+  if [ -n "$im" ] && $im "$face[0]" -auto-orient -resize '256x256^' -gravity center -extent 256x256 "PNG:$out.tmp" 2>/dev/null; then
+    mv -f "$out.tmp" "$out"
+  else
+    rm -f "$out.tmp"; cp -f "$face" "$out"
+  fi
+  chmod 644 "$out" 2>/dev/null
+  return 0
+}
+
+sync() {
+  [ -d "$U" ] && [ -w "$U" ] || { echo "the login screen is not installed (rice-sddm install)"; return 0; }
+  local w im="" out="$U/theme.conf.user.tmp" f
+  command -v magick >/dev/null 2>&1 && im=magick || { command -v convert >/dev/null 2>&1 && im=convert; }
+  w="$(wallpaper)"
+  if [ -n "$w" ]; then
+    if [ -n "$im" ]; then
+      # a sharp one at screen size, and a blurred one (made small first: fast)
+      $im "$w[0]" -resize '2560x1440^' -quality 90 "$U/bg.jpg.tmp.jpg" 2>/dev/null && mv -f "$U/bg.jpg.tmp.jpg" "$U/bg.jpg"
+      $im "$w[0]" -resize '640x360^' -blur 0x10 -resize '1920x1080^' -quality 85 "$U/blur.jpg.tmp.jpg" 2>/dev/null && mv -f "$U/blur.jpg.tmp.jpg" "$U/blur.jpg"
+    else
+      cp -f "$w" "$U/bg.jpg"; rm -f "$U/blur.jpg"
+    fi
+  fi
+  # the shell's font (SDDM cannot see the fonts in your home)
+  f="$(find "$HOME/.local/share/fonts" -iname 'GoogleSansFlex*.ttf' 2>/dev/null | head -1)"
+  [ -n "$f" ] && ! cmp -s "$f" "$U/font.ttf" && cp -f "$f" "$U/font.ttf"
+  face_sync "$im"
+  {
+    echo "[General]"
+    [ -f "$U/bg.jpg" ] && echo "background=$U/bg.jpg"
+    [ -f "$U/blur.jpg" ] && echo "backgroundBlur=$U/blur.jpg"
+    [ -f "$U/font.ttf" ] && echo "font=$U/font.ttf"
+    echo "avatarDir=$U/faces"
+    local k v
+    for k in primary:primary onPrimary:on_primary primaryContainer:primary_container onPrimaryContainer:on_primary_container \
+             secondaryContainer:secondary_container surface:surface surfaceContainer:surface_container surfaceHigh:surface_high \
+             surfaceHighest:surface_highest onSurface:on_surface onSurfaceVariant:on_surface_variant outline:outline error:error; do
+      v="$(color "${k#*:}")"
+      [[ "$v" =~ ^#[0-9a-fA-F]{6}$ ]] && echo "${k%%:*}=$v"
+    done
+    # the shell's language (Settings > Languages)
+    v="$(python3 -c 'import json,sys
+try: print(json.load(open(sys.argv[1])).get("lang", "en"))
+except Exception: print("en")' "$HOME/.config/rice/settings-app.json")"
+    [[ "$v" =~ ^[a-zA-Z_-]{2,8}$ ]] && echo "lang=$v"
+    # 24 hours unless your region says 12
+    if grep -q '"clock"[^,}]*12' "$HOME/.config/rice/region.json" 2>/dev/null; then echo "clock24=false"; else echo "clock24=true"; fi
+  } >"$out"
+  mv -f "$out" "$U/theme.conf.user"
+  find "$U" -type f -exec chmod 644 {} + 2>/dev/null; find "$U" -type d -exec chmod 755 {} + 2>/dev/null
+  echo "synced"
+}
+
+preview() {
+  local g
+  for g in sddm-greeter-qt6 sddm-greeter; do
+    command -v "$g" >/dev/null 2>&1 && { setsid -f "$g" --test-mode --theme "$THEME" >/dev/null 2>&1; return 0; }
+  done
+  echo "sddm-greeter was not found (is SDDM installed?)"; return 1
+}
+
+case "${1:-state}" in
+  state) state ;;
+  install) install ;;
+  use-sddm) install use-sddm ;;
+  remove) sudo_run "$(readlink -f "$0")" root-remove ;;
+  sync) sync ;;
+  face) [ -d "$U" ] && [ -w "$U" ] && face_sync && echo "picture synced" || echo "the login screen is not installed" ;;
+  preview) preview ;;
+  root-install) shift; root_install "$@" ;;
+  root-remove) root_remove ;;
+  *) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac

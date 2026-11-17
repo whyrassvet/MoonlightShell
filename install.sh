@@ -829,6 +829,21 @@ step_finish() {
       task "niri config (written again for your niri when it first starts)" t "$BIN/rice-niri" apply
     fi
   fi
+  # the login screen (SDDM): the shell's own theme; install, update and a newer theme all put it in
+  if [ -x "$BIN/rice-sddm" ] && [ "$DRY_RUN" != 1 ]; then
+    if [ -w /usr/share/sddm/themes/moonlight-shell/user ]; then
+      # the update brought newer theme files: put them in again (it asks for your password)
+      if "$BIN/rice-sddm" state 2>/dev/null | grep -q '"outdated": *true'; then
+        info "Login screen (SDDM): the update brought a newer theme (it asks for your password)"
+        "$BIN/rice-sddm" install || { warn "The newer login screen was not put in (Settings > Desktop > Idle & Lockscreen > Update it)"; task "Login screen (SDDM): your wallpaper and colors" t "$BIN/rice-sddm" sync; }
+      else
+        task "Login screen (SDDM): your wallpaper and colors" t "$BIN/rice-sddm" sync
+      fi
+    elif command -v sddm >/dev/null 2>&1; then
+      info "Login screen (SDDM): putting the shell's theme in (it asks for your password)"
+      "$BIN/rice-sddm" install || warn "The login screen was not put in (Settings > Desktop > Idle & Lockscreen can do it later)"
+    fi
+  fi
   # Settings > Security > Shell files: the files are watched from here on (after every install and update)
   if [ "$IN_HYPR" = 1 ] && [ "$DRY_RUN" != 1 ]; then
     task "Reloading Hyprland" t hyprctl reload
