@@ -782,6 +782,26 @@ migrate_theme_colors() {
     fi
     rm -f "$tmp"
   fi
+  # the palette for the apps and the login screen: configs made before it existed have no such template
+  # (an update keeps your matugen config), so it is added without touching the other templates
+  if [ -f "$cfg" ]; then
+    local ptpl="$HOME/.config/matugen/templates/palette.json"
+    [ -f "$ptpl" ] || put "$ROOT/config/matugen/templates/palette.json" "$ptpl"
+    if ! grep -Eq '^[[:space:]]*\[templates\.palette\]' "$cfg"; then
+      tmp="$(mktemp)"
+      cp -f "$cfg" "$tmp"
+      cat >>"$tmp" <<'EOF'
+
+# the palette for your apps (rice-theme) and the login screen (rice-sddm)
+[templates.palette]
+input_path = '~/.config/matugen/templates/palette.json'
+output_path = '~/.config/rice/palette.json'
+post_hook = 'setsid -f $HOME/.local/bin/rice-theme sync >/dev/null 2>&1; [ -w /usr/share/sddm/themes/moonlight-shell/user ] && setsid -f $HOME/.local/bin/rice-sddm sync >/dev/null 2>&1; true'
+EOF
+      put "$tmp" "$cfg" || { rm -f "$tmp"; return 1; }
+      rm -f "$tmp"
+    fi
+  fi
 }
 
 step_finish() {

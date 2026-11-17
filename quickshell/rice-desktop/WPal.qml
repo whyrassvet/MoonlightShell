@@ -50,9 +50,11 @@ QtObject {
     property color inkOn: theme === "google" ? (light ? "#ffffff" : Qt.hsla(hue, Math.min(sat, 0.5), 0.12, 1))
                                                   : (light ? "#F6F5F4" : "#0d0d0d")
     property color warn: light ? "#c0392b" : "#e06c75"
-    // a second, warm color for the expressive widgets (play buttons, the GPU)
-    property color tertiary: light ? Qt.hsla((hue + 0.5) % 1, 0.5, 0.45, 1) : Qt.hsla((hue + 0.5) % 1, 0.55, 0.72, 1)
-    property color inkTertiary: light ? "#ffffff" : Qt.hsla((hue + 0.5) % 1, 0.5, 0.14, 1)
+    // a second, warm color for the expressive widgets (play buttons, the GPU). It keeps the accent's
+    // colorfulness, so a grey palette stays grey instead of turning into a made-up cyan
+    readonly property real tertSat: Math.max(0, Math.min(0.55, sat))
+    property color tertiary: light ? Qt.hsla((hue + 0.5) % 1, tertSat * 0.9, 0.45, 1) : Qt.hsla((hue + 0.5) % 1, tertSat, 0.72, 1)
+    property color inkTertiary: light ? "#ffffff" : Qt.hsla((hue + 0.5) % 1, tertSat * 0.9, 0.14, 1)
     // the soft fill of a shaped widget (a little stronger than a card)
     property color shapeFill: theme === "outline" ? Qt.rgba(light ? 0 : 1, light ? 0 : 1, light ? 0 : 1, 0.08)
                             : (light ? Qt.hsla(hue, sat * 0.4, 0.88, Look.flat ? 1 : 0.86 * Math.max(0.3, k)) : Qt.hsla(hue, sat * 0.3, 0.17, Look.flat ? 1 : 0.8 * Math.max(0.3, k)))

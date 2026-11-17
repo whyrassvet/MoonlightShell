@@ -30,7 +30,7 @@ output_path = '~/.config/hypr/border-colors.txt'
 post_hook = '$HOME/.local/bin/border-sync'
 
 
-# the palette for your apps (rice-theme: VSCodium / VS Code, Discord clients)
+# the palette for your apps (rice-theme: VSCodium / VS Code, Discord clients) and the login screen
 [templates.palette]
 input_path = '~/.config/matugen/templates/palette.json'
 output_path = '~/.config/rice/palette.json'

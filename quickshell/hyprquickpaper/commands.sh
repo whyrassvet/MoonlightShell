@@ -95,6 +95,7 @@ if [ -z "$mat" ]; then
 else
   rm -f "$HOME/.cache/rice/colors-told"
   cmd[0]="$mat"
+  stamp="$HOME/.cache/rice/colors-stamp"; : >"$stamp"
   # never waits for an answer. Older matugen has no --source-color-index: left out then
   if ! "${cmd[@]}" -q </dev/null 2>>"$log"; then
     say "matugen failed: ${cmd[*]} -q (trying again without the newer options)"
@@ -106,6 +107,49 @@ else
     done
     "${plain[@]}" </dev/null >>"$log" 2>&1 || say "matugen failed again: see the lines above"
   fi
+fi
+
+# the palette for the apps (rice-theme) and the login screen (rice-sddm): matugen's palette template writes
+# it. An older install keeps its matugen config on updates, and that config may have no such template, so the
+# same palette is taken from matugen's JSON here (the shell's roles, the dark mode)
+pal="$HOME/.config/rice/palette.json"
+if [ -n "${mat:-}" ] && { [ ! -s "$pal" ] || [ "$pal" -ot "$stamp" ]; }; then
+  j="$pal.json.tmp"
+  if "${cmd[@]}" --json hex -q --dry-run </dev/null >"$j" 2>>"$log"; then
+    if python3 - "$j" "$pal.tmp" <<'PY' 2>>"$log"
+import json, sys
+src, dst = sys.argv[1], sys.argv[2]
+roles = {
+    "surface": "surface", "surface_low": "surface_container_low",
+    "surface_container": "surface_container", "surface_high": "surface_container_high",
+    "surface_highest": "surface_container_highest", "on_surface": "on_surface",
+    "on_surface_variant": "on_surface_variant", "outline": "outline",
+    "outline_variant": "outline_variant", "primary": "primary", "on_primary": "on_primary",
+    "primary_container": "primary_container", "on_primary_container": "on_primary_container",
+    "secondary": "secondary", "secondary_container": "secondary_container",
+    "tertiary": "tertiary", "error": "error",
+}
+colors = json.load(open(src))["colors"]
+def hex_of(role):
+    v = colors[role]["default"]["color"]
+    return v if v.startswith("#") else "#" + v
+with open(dst, "w") as f:
+    json.dump({key: hex_of(role) for key, role in roles.items()}, f, indent=2)
+    f.write("\n")
+PY
+    then
+      mv -f "$pal.tmp" "$pal"
+      # the palette template's post_hook would do this; a config from before it existed has no hook
+      setsid -f "$HOME/.local/bin/rice-theme" sync >/dev/null 2>&1
+      if [ -z "${RICE_SDDM_BUSY:-}" ] && [ -w /usr/share/sddm/themes/moonlight-shell/user ]; then
+        setsid -f "$HOME/.local/bin/rice-sddm" sync >/dev/null 2>&1
+      fi
+    else rm -f "$pal.tmp"; say "the palette for the apps was not made"
+    fi
+  else
+    say "matugen did not give the palette for the apps"
+  fi
+  rm -f "$j"
 fi
 
 mkdir -p "$HOME/.cache"

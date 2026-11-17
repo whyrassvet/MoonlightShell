@@ -162,6 +162,12 @@ sync() {
   local w im="" out="$U/theme.conf.user.tmp" f
   command -v magick >/dev/null 2>&1 && im=magick || { command -v convert >/dev/null 2>&1 && im=convert; }
   w="$(wallpaper)"
+  # the colors come from the shell's palette (matugen). An install from before the palette template
+  # existed has no palette yet: the colors are made once from your wallpaper, as a wallpaper change does
+  if [ -n "$w" ] && [ -z "$(color primary)" ]; then
+    local cs="$HOME/.config/quickshell/hyprquickpaper/commands.sh"
+    [ -x "$cs" ] && RICE_COLORS_ONLY=1 RICE_SDDM_BUSY=1 timeout 30 "$cs" "$w" >/dev/null 2>&1
+  fi
   if [ -n "$w" ]; then
     if [ -n "$im" ]; then
       # a sharp one at screen size, and a blurred one (made small first: fast)
