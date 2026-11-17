@@ -703,6 +703,10 @@ wire_hypr() {
       printf '\nrequire("%s")\n' "$m" >>"$lua"
     fi
   done
+  # a password prompt for admin actions (pkexec: Settings and the installer use it)
+  if ! grep -q 'hyprpolkitagent' "$lua"; then
+    printf '\n-- Moonlight Shell: a password prompt for admin actions (pkexec)\nhl.on("hyprland.start", function() hl.exec_cmd("systemctl --user start hyprpolkitagent.service 2>/dev/null || hyprpolkitagent") end)\n' >>"$lua"
+  fi
   # User overrides must remain last even when hardware modules were added above.
   if [ -f "$HOME/.config/hypr/hyprland-user.lua" ]; then
     python3 - "$lua" <<'PY'

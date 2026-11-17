@@ -34,10 +34,17 @@ theme_now() {
   echo "$v"
 }
 sudo_run() {
-  # from Settings (no terminal): pkexec shows a password window; in a terminal: sudo
-  if [ -t 0 ] && command -v sudo >/dev/null 2>&1; then sudo "$@"
+  # in a terminal with a controlling tty: sudo; from Settings (no terminal): pkexec shows a password window
+  if [ -t 0 ] && ( : </dev/tty ) 2>/dev/null && command -v sudo >/dev/null 2>&1; then sudo "$@"
   elif command -v pkexec >/dev/null 2>&1; then pkexec "$@"
-  else sudo "$@"; fi
+  elif command -v sudo >/dev/null 2>&1; then sudo "$@"
+  else echo "sudo and pkexec were not found"; return 1; fi
+}
+# pkexec needs a polkit agent for its password window; without one it fails with "textual authentication agent"
+auth_hint() {
+  if ! pgrep -u "$(id -u)" -f 'polkit.*agent|hyprpolkitagent' >/dev/null 2>&1; then
+    echo "No password prompt is running: start it with systemctl --user start hyprpolkitagent.service, or run rice-sddm install in a terminal"
+  fi
 }
 pkg_cmd() {
   . /etc/os-release 2>/dev/null
@@ -116,7 +123,7 @@ install() {
   local r; r="$(repo)"
   [ -n "$r" ] || { echo "the shell's folder was not found (~/.config/rice/repo)"; exit 1; }
   have_sddm || echo "SDDM is not installed yet: $(pkg_cmd)"
-  sudo_run "$(readlink -f "$0")" root-install "$r/sddm/$NAME" "$(id -un)" ${1:-} || exit 1
+  sudo_run "$(readlink -f "$0")" root-install "$r/sddm/$NAME" "$(id -un)" ${1:-} || { auth_hint; exit 1; }
   sync
 }
 
@@ -206,7 +213,7 @@ case "${1:-state}" in
   state) state ;;
   install) install ;;
   use-sddm) install use-sddm ;;
-  remove) sudo_run "$(readlink -f "$0")" root-remove ;;
+  remove) sudo_run "$(readlink -f "$0")" root-remove || auth_hint ;;
   sync) sync ;;
   face) [ -d "$U" ] && [ -w "$U" ] && face_sync && echo "picture synced" || echo "the login screen is not installed" ;;
   preview) preview ;;
